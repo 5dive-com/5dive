@@ -237,12 +237,39 @@ const server = Bun.serve({
         return Response.json(result, { headers });
       }
 
-      // POST /api/agents/:name/ask  { text }
+      // POST /api/agents/:name/ask  { text, timeout? }
       if (req.method === "POST" && action === "ask") {
         const body = await req.json() as { text: string; timeout?: number };
         const args = ["agent", "ask", name, body.text];
         if (body.timeout) args.push(`--timeout=${body.timeout}`);
         const result = await runCLI(...args);
+        return Response.json(result, { headers });
+      }
+
+      // GET /api/agents/:name/telegram-access
+      if (req.method === "GET" && action === "telegram-access") {
+        const result = await runCLI("agent", "telegram-access", "get", name);
+        return Response.json(result, { headers });
+      }
+
+      // POST /api/agents/:name/telegram-access  (body is the access JSON)
+      if (req.method === "POST" && action === "telegram-access") {
+        const body = await req.json();
+        const result = await new Promise<{ ok: boolean; data?: unknown; error?: string }>((resolve) => {
+          const proc = spawn(CLI, ["agent", "telegram-access", "set", name, "--json"], {
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+          let stdout = "";
+          let stderr = "";
+          proc.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
+          proc.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+          proc.on("close", (code) => {
+            try { resolve(JSON.parse(stdout.trim())); }
+            catch { resolve({ ok: false, error: stderr.trim() || `exit ${code}` }); }
+          });
+          proc.stdin.write(JSON.stringify(body));
+          proc.stdin.end();
+        });
         return Response.json(result, { headers });
       }
 

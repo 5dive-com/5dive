@@ -43,8 +43,8 @@ export default function App() {
           onNewAgent={() => setCreateOpen(true)}
         />
 
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-3xl px-8 py-8">
+        <main className="flex-1 overflow-y-auto pt-14 pb-16 md:pt-0 md:pb-0">
+          <div className="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
             {page === "agents" && (
               <AgentsPage
                 agents={agents}

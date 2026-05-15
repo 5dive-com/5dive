@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Button, Spinner, Tabs } from "@heroui/react";
-import { ArrowLeft, Play, Square, RotateCw, Terminal, Send, BarChart2, Settings, Copy } from "lucide-react";
+import { ArrowLeft, Play, Square, RotateCw, Terminal, Send, BarChart2, Settings } from "lucide-react";
 import type { Agent } from "../types";
 import { TYPE_ICON, CHANNEL_ICON } from "./icons";
 import { StatusDot } from "./StatusDot";
@@ -81,8 +81,10 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
   const [logsLoading, setLogsLoading] = useState(true);
   const [stats, setStats] = useState<Record<string, string> | null>(null);
   const [message, setMessage] = useState("");
+  const [sendMode, setSendMode] = useState<"send" | "ask">("send");
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<string | null>(null);
+  const [askReply, setAskReply] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const Icon = TYPE_ICON[agent.type] ?? TYPE_ICON.claude;
@@ -133,16 +135,23 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
     if (!message.trim() || sending) return;
     setSending(true);
     setSendResult(null);
+    setAskReply(null);
+    const endpoint = sendMode === "ask" ? "ask" : "send";
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/send`, {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: message }),
+        body: JSON.stringify({ text: message, ...(sendMode === "ask" ? { timeout: 120 } : {}) }),
       });
       const j = await res.json();
       if (j.ok) {
-        toast("success", "Message sent");
-        setSendResult("Sent.");
+        if (sendMode === "ask") {
+          const reply = typeof j.data === "string" ? j.data : j.data?.reply ?? "Done.";
+          setAskReply(reply);
+        } else {
+          toast("success", "Message sent");
+          setSendResult("Sent.");
+        }
         setMessage("");
       } else {
         const err = j.error?.message ?? j.error ?? "Failed";
@@ -258,13 +267,34 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
         {/* Send */}
         <Tabs.Panel id="send">
           <div className="mt-3 flex flex-col gap-3">
+            {/* Mode toggle */}
+            <div className="flex gap-1 rounded-xl bg-surface-raised p-1 w-fit">
+              <button
+                onClick={() => { setSendMode("send"); setSendResult(null); setAskReply(null); }}
+                className={`rounded-lg px-3 py-1.5 text-[0.8125rem] font-medium transition-colors ${
+                  sendMode === "send" ? "bg-surface-card shadow-sm text-ink" : "text-ink-secondary hover:text-ink"
+                }`}
+              >
+                Send
+              </button>
+              <button
+                onClick={() => { setSendMode("ask"); setSendResult(null); setAskReply(null); }}
+                className={`rounded-lg px-3 py-1.5 text-[0.8125rem] font-medium transition-colors ${
+                  sendMode === "ask" ? "bg-surface-card shadow-sm text-ink" : "text-ink-secondary hover:text-ink"
+                }`}
+              >
+                Ask
+              </button>
+            </div>
             <p className="text-[0.8125rem] text-ink-secondary">
-              Inject a message into the agent's terminal session.
+              {sendMode === "send"
+                ? "Inject a message into the agent's terminal session (fire and forget)."
+                : "Send a message and wait for the agent's reply (up to 2 min timeout)."}
             </p>
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder="Type a message…"
+              placeholder={sendMode === "ask" ? "Ask the agent something…" : "Type a message…"}
               rows={4}
               className="w-full resize-none rounded-xl border border-border-subtle bg-surface-card px-3.5 py-2.5 text-[0.875rem] text-ink outline-none focus:border-signal"
               onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send(); }}
@@ -276,15 +306,22 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
                 isDisabled={sending || !message.trim()}
                 onPress={() => void send()}
               >
-                {sending ? <Spinner size="sm" /> : <Send className="size-3.5" />}
-                Send
+                {sending
+                  ? <><Spinner size="sm" /> {sendMode === "ask" ? "Waiting…" : "Sending…"}</>
+                  : <><Send className="size-3.5" /> {sendMode === "ask" ? "Ask" : "Send"}</>}
               </Button>
-              <span className="text-[0.75rem] text-ink-muted">⌘↵ to send</span>
+              <span className="text-[0.75rem] text-ink-muted">⌘↵ to {sendMode}</span>
             </div>
             {sendResult && (
               <p className={`text-[0.8125rem] ${sendResult === "Sent." ? "text-green-status" : "text-red-500"}`}>
                 {sendResult}
               </p>
+            )}
+            {askReply && (
+              <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+                <p className="mb-1 text-[0.7rem] font-semibold uppercase tracking-wider text-green-600">Reply</p>
+                <pre className="whitespace-pre-wrap text-[0.8125rem] text-ink leading-relaxed">{askReply}</pre>
+              </div>
             )}
           </div>
         </Tabs.Panel>
@@ -350,6 +387,12 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
                 placeholder="default"
               />
             </div>
+
+            {agent.channels === "telegram" && (
+              <div className="border-t border-border-subtle pt-4">
+                <TelegramAccessPanel agentName={agent.name} />
+              </div>
+            )}
           </div>
         </Tabs.Panel>
       </Tabs>
@@ -399,6 +442,136 @@ function ChannelSelect({ agentName, currentChannel }: { agentName: string; curre
       >
         {saving ? <Spinner size="sm" /> : "Save"}
       </Button>
+    </div>
+  );
+}
+
+interface TelegramAccess {
+  dmPolicy?: string;
+  allowFrom?: number[];
+  groups?: Record<string, unknown>[];
+}
+
+function TelegramAccessPanel({ agentName }: { agentName: string }) {
+  const [access, setAccess] = useState<TelegramAccess | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [newUserId, setNewUserId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const toast = useToast();
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentName)}/telegram-access`);
+      const j = await res.json();
+      if (j.ok) setAccess(j.data ?? {});
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void load(); }, [agentName]);
+
+  const saveAccess = async (updated: TelegramAccess) => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentName)}/telegram-access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated),
+      });
+      const j = await res.json();
+      if (j.ok) { toast("success", "Access updated"); setAccess(updated); }
+      else toast("error", j.error?.message ?? j.error ?? "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addUser = async () => {
+    const id = parseInt(newUserId.trim());
+    if (isNaN(id)) { toast("error", "Enter a valid Telegram user ID"); return; }
+    const current = access ?? {};
+    const updated: TelegramAccess = {
+      ...current,
+      allowFrom: [...(current.allowFrom ?? []), id],
+    };
+    await saveAccess(updated);
+    setNewUserId("");
+  };
+
+  const removeUser = async (id: number) => {
+    const current = access ?? {};
+    const updated: TelegramAccess = {
+      ...current,
+      allowFrom: (current.allowFrom ?? []).filter((u) => u !== id),
+    };
+    await saveAccess(updated);
+  };
+
+  if (loading) return <div className="flex justify-center py-4"><Spinner size="sm" /></div>;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-[0.75rem] font-semibold uppercase tracking-wider text-ink-muted">Telegram access</p>
+
+      {/* DM policy */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[0.8125rem] font-medium text-ink">DM policy</label>
+        <select
+          value={access?.dmPolicy ?? "allowlist"}
+          onChange={(e) => void saveAccess({ ...(access ?? {}), dmPolicy: e.target.value })}
+          className="w-full rounded-xl border border-border-subtle bg-surface-card px-3.5 py-2 text-[0.875rem] text-ink outline-none focus:border-signal"
+          disabled={saving}
+        >
+          <option value="allowlist">Allowlist only</option>
+          <option value="open">Open (anyone can DM)</option>
+          <option value="disabled">Disabled</option>
+        </select>
+      </div>
+
+      {/* Allowed users */}
+      <div className="flex flex-col gap-2">
+        <label className="text-[0.8125rem] font-medium text-ink">Allowed user IDs</label>
+        {(access?.allowFrom ?? []).length === 0 ? (
+          <p className="text-[0.8125rem] text-ink-muted">No users in allowlist.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {(access?.allowFrom ?? []).map((id) => (
+              <span
+                key={id}
+                className="flex items-center gap-1.5 rounded-lg bg-surface-raised px-2.5 py-1 text-[0.8125rem] text-ink"
+              >
+                {id}
+                <button
+                  onClick={() => void removeUser(id)}
+                  className="text-ink-muted hover:text-red-500"
+                  disabled={saving}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2">
+          <input
+            value={newUserId}
+            onChange={(e) => setNewUserId(e.target.value)}
+            placeholder="Telegram user ID (numeric)"
+            className="flex-1 rounded-xl border border-border-subtle bg-surface-card px-3.5 py-2 text-[0.875rem] text-ink outline-none focus:border-signal"
+            onKeyDown={(e) => { if (e.key === "Enter") void addUser(); }}
+          />
+          <Button
+            size="sm"
+            className="bg-signal text-white"
+            isDisabled={saving || !newUserId.trim()}
+            onPress={() => void addUser()}
+          >
+            {saving ? <Spinner size="sm" /> : "Add"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
