@@ -1,15 +1,78 @@
 import { useState, useEffect, useRef } from "react";
 import { Button, Spinner, Tabs } from "@heroui/react";
-import { ArrowLeft, Play, Square, RotateCw, Terminal, Send, BarChart2 } from "lucide-react";
+import { ArrowLeft, Play, Square, RotateCw, Terminal, Send, BarChart2, Settings, Copy } from "lucide-react";
 import type { Agent } from "../types";
-import { TYPE_ICON } from "./icons";
+import { TYPE_ICON, CHANNEL_ICON } from "./icons";
 import { StatusDot } from "./StatusDot";
 import { TypeBadge } from "./TypeBadge";
+import { useToast } from "../context/ToastContext";
 
 interface Props {
   agent: Agent;
   onBack: () => void;
   onRefresh: () => void;
+}
+
+function ConfigField({
+  label,
+  configKey,
+  defaultValue,
+  agentName,
+  placeholder,
+  type = "text",
+}: {
+  label: string;
+  configKey: string;
+  defaultValue: string;
+  agentName: string;
+  placeholder?: string;
+  type?: string;
+}) {
+  const [value, setValue] = useState(defaultValue);
+  const [saving, setSaving] = useState(false);
+  const toast = useToast();
+  const dirty = value !== defaultValue;
+
+  const save = async () => {
+    if (!dirty || saving) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentName)}/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: configKey, value }),
+      });
+      const j = await res.json();
+      if (j.ok) toast("success", `${label} updated`);
+      else toast("error", j.error?.message ?? j.error ?? `Failed to update ${label}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-[0.8125rem] font-medium text-ink">{label}</label>
+      <div className="flex gap-2">
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={placeholder}
+          type={type}
+          className="flex-1 rounded-xl border border-border-subtle bg-surface-card px-3.5 py-2 text-[0.875rem] text-ink outline-none focus:border-signal font-mono"
+          onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
+        />
+        <Button
+          size="sm"
+          className="bg-signal text-white"
+          isDisabled={!dirty || saving}
+          onPress={() => void save()}
+        >
+          {saving ? <Spinner size="sm" /> : "Save"}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 export function AgentDetail({ agent, onBack, onRefresh }: Props) {
@@ -23,6 +86,7 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const Icon = TYPE_ICON[agent.type] ?? TYPE_ICON.claude;
+  const toast = useToast();
 
   useEffect(() => {
     if (activeTab !== "logs") return;
@@ -51,11 +115,14 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
       .then((j) => { if (j.ok) setStats(j.data); });
   }, [agent.name, activeTab]);
 
-  const act = async (action: string) => {
+  const act = async (action: string, label: string) => {
     if (busy) return;
     setBusy(action);
     try {
-      await fetch(`/api/agents/${encodeURIComponent(agent.name)}/${action}`, { method: "POST" });
+      const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/${action}`, { method: "POST" });
+      const j = await res.json();
+      if (j.ok) toast("success", `${agent.name} ${label}`);
+      else toast("error", j.error?.message ?? j.error ?? `Failed to ${action}`);
       await onRefresh();
     } finally {
       setBusy(null);
@@ -73,14 +140,22 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
         body: JSON.stringify({ text: message }),
       });
       const j = await res.json();
-      setSendResult(j.ok ? "Sent." : (j.error?.message ?? j.error ?? "Failed"));
-      if (j.ok) setMessage("");
+      if (j.ok) {
+        toast("success", "Message sent");
+        setSendResult("Sent.");
+        setMessage("");
+      } else {
+        const err = j.error?.message ?? j.error ?? "Failed";
+        toast("error", err);
+        setSendResult(err);
+      }
     } finally {
       setSending(false);
     }
   };
 
   const isActive = agent.status === "active";
+  const CIcon = agent.channels ? CHANNEL_ICON[agent.channels] : null;
 
   return (
     <div className="flex flex-col gap-5">
@@ -103,6 +178,7 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
           <span className="font-medium text-ink">{agent.name}</span>
           <StatusDot status={agent.status} />
           <TypeBadge type={agent.type} />
+          {CIcon && <CIcon className="size-3 text-ink-muted" />}
         </div>
       </div>
 
@@ -113,7 +189,7 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
           variant="bordered"
           className="gap-1.5 border-border-subtle text-[0.8125rem]"
           isDisabled={!!busy}
-          onPress={() => act(isActive ? "stop" : "start")}
+          onPress={() => act(isActive ? "stop" : "start", isActive ? "stopped" : "started")}
         >
           {(busy === "stop" || busy === "start")
             ? <Spinner size="sm" />
@@ -125,7 +201,7 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
           variant="bordered"
           className="gap-1.5 border-border-subtle text-[0.8125rem]"
           isDisabled={!!busy}
-          onPress={() => act("restart")}
+          onPress={() => act("restart", "restarted")}
         >
           {busy === "restart" ? <Spinner size="sm" /> : <RotateCw className="size-3.5" />}
           Restart
@@ -143,15 +219,19 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
             <Tabs.Tab id="logs">
               <span className="flex items-center gap-1.5"><Terminal className="size-3.5" /> Logs</span>
             </Tabs.Tab>
-            <Tabs.Tab id="ask">
+            <Tabs.Tab id="send">
               <span className="flex items-center gap-1.5"><Send className="size-3.5" /> Send</span>
             </Tabs.Tab>
             <Tabs.Tab id="stats">
               <span className="flex items-center gap-1.5"><BarChart2 className="size-3.5" /> Stats</span>
             </Tabs.Tab>
+            <Tabs.Tab id="config">
+              <span className="flex items-center gap-1.5"><Settings className="size-3.5" /> Config</span>
+            </Tabs.Tab>
           </Tabs.List>
         </Tabs.ListContainer>
 
+        {/* Logs */}
         <Tabs.Panel id="logs">
           <div className="terminal-block mt-3 h-96">
             <div className="terminal-header">
@@ -175,7 +255,8 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
           </div>
         </Tabs.Panel>
 
-        <Tabs.Panel id="ask">
+        {/* Send */}
+        <Tabs.Panel id="send">
           <div className="mt-3 flex flex-col gap-3">
             <p className="text-[0.8125rem] text-ink-secondary">
               Inject a message into the agent's terminal session.
@@ -208,6 +289,7 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
           </div>
         </Tabs.Panel>
 
+        {/* Stats */}
         <Tabs.Panel id="stats">
           <div className="mt-3 rounded-xl border border-border-subtle bg-surface-card p-5">
             {!stats ? (
@@ -224,7 +306,99 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
             )}
           </div>
         </Tabs.Panel>
+
+        {/* Config */}
+        <Tabs.Panel id="config">
+          <div className="mt-3 flex flex-col gap-5 rounded-xl border border-border-subtle bg-surface-card p-5">
+            <p className="text-[0.8125rem] text-ink-secondary">
+              Changes take effect immediately (no restart needed for most fields).
+            </p>
+
+            <ConfigField
+              label="Working directory"
+              configKey="workdir"
+              defaultValue={agent.workdir ?? "/home/claude/projects"}
+              agentName={agent.name}
+              placeholder="/home/claude/projects"
+            />
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[0.8125rem] font-medium text-ink">Channel</label>
+              <div className="flex gap-2">
+                <ChannelSelect agentName={agent.name} currentChannel={agent.channels ?? "none"} />
+              </div>
+            </div>
+
+            {(agent.channels === "telegram" || agent.channels === "discord") && (
+              <ConfigField
+                label={`${agent.channels === "telegram" ? "Telegram" : "Discord"} bot token`}
+                configKey={`${agent.channels}.token`}
+                defaultValue=""
+                agentName={agent.name}
+                placeholder={agent.channels === "telegram" ? "1234567890:ABC…" : "Bot token…"}
+                type="password"
+              />
+            )}
+
+            <div className="border-t border-border-subtle pt-4">
+              <p className="mb-2 text-[0.75rem] font-medium text-ink-muted">Auth profile</p>
+              <ConfigField
+                label="Auth profile name"
+                configKey="auth-profile"
+                defaultValue={agent.authProfile ?? "default"}
+                agentName={agent.name}
+                placeholder="default"
+              />
+            </div>
+          </div>
+        </Tabs.Panel>
       </Tabs>
+    </div>
+  );
+}
+
+function ChannelSelect({ agentName, currentChannel }: { agentName: string; currentChannel: string }) {
+  const [channel, setChannel] = useState(currentChannel);
+  const [saving, setSaving] = useState(false);
+  const toast = useToast();
+  const dirty = channel !== currentChannel;
+
+  const save = async () => {
+    if (!dirty || saving) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentName)}/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "channels", value: channel }),
+      });
+      const j = await res.json();
+      if (j.ok) toast("success", "Channel updated — restart agent to apply");
+      else toast("error", j.error?.message ?? j.error ?? "Failed to update channel");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex gap-2 flex-1">
+      <select
+        value={channel}
+        onChange={(e) => setChannel(e.target.value)}
+        className="flex-1 rounded-xl border border-border-subtle bg-surface-card px-3.5 py-2 text-[0.875rem] text-ink outline-none focus:border-signal"
+      >
+        <option value="none">None</option>
+        <option value="telegram">Telegram</option>
+        <option value="discord">Discord</option>
+      </select>
+      <Button
+        size="sm"
+        className="bg-signal text-white"
+        isDisabled={!dirty || saving}
+        onPress={() => void save()}
+      >
+        {saving ? <Spinner size="sm" /> : "Save"}
+      </Button>
     </div>
   );
 }

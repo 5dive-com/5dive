@@ -125,11 +125,13 @@ const server = Bun.serve({
         const result = await runCLI("agent", "auth", "status", type);
         return Response.json(result, { headers });
       }
-      // POST /api/auth/:type  { apiKey }  — set API key via stdin
+      // POST /api/auth/:type  { apiKey, provider? }  — set API key via stdin
       if (req.method === "POST") {
-        const body = await req.json() as { apiKey: string };
+        const body = await req.json() as { apiKey: string; provider?: string };
+        const authArgs = ["agent", "auth", "set", type, "--api-key=-", "--json"];
+        if (body.provider) authArgs.push(`--provider=${body.provider}`);
         const result = await new Promise<{ ok: boolean; data?: unknown; error?: string }>((resolve) => {
-          const proc = spawn(CLI, ["agent", "auth", "set", type, "--api-key=-", "--json"], {
+          const proc = spawn(CLI, authArgs, {
             stdio: ["pipe", "pipe", "pipe"],
           });
           let stdout = "";
@@ -180,6 +182,9 @@ const server = Bun.serve({
       if (body.isolation) args.push(`--isolation=${body.isolation}`);
       if (body.channels) args.push(`--channels=${body.channels}`);
       if (body.telegramToken) args.push(`--telegram-token=${body.telegramToken}`);
+      if (body.workdir) args.push(`--workdir=${body.workdir}`);
+      if (body.authProfile) args.push(`--auth-profile=${body.authProfile}`);
+      if (body.deferAuth === "true") args.push("--defer-auth");
       const result = await runCLI(...args);
       return Response.json(result, { headers });
     }

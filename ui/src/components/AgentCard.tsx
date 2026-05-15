@@ -6,6 +6,7 @@ import { TYPE_ICON, CHANNEL_ICON } from "./icons";
 import { StatusDot } from "./StatusDot";
 import { TypeBadge } from "./TypeBadge";
 import { useToast } from "../context/ToastContext";
+import { CloneAgentModal } from "./CloneAgentModal";
 
 const DEFAULT_WORKDIR = "/home/claude/projects";
 
@@ -17,6 +18,7 @@ interface Props {
 
 export function AgentCard({ agent, onSelect, onRefresh }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [cloneOpen, setCloneOpen] = useState(false);
   const Icon = TYPE_ICON[agent.type] ?? TYPE_ICON.claude;
   const toast = useToast();
   const isActive = agent.status === "active";
@@ -59,12 +61,14 @@ export function AgentCard({ agent, onSelect, onRefresh }: Props) {
     if (id === "restart") void act("restart", "restarted");
     if (id === "delete")  void del();
     if (id === "view")    onSelect();
+    if (id === "clone")   setCloneOpen(true);
   };
 
   const showWorkdir = agent.workdir && agent.workdir !== DEFAULT_WORKDIR;
   const showProfile = agent.authProfile && agent.authProfile !== "default";
 
   return (
+    <>
     <div
       className={`group flex items-center gap-4 rounded-xl border bg-surface-card px-4 py-3.5 transition-shadow hover:shadow-sm ${
         isActive
@@ -155,6 +159,9 @@ export function AgentCard({ agent, onSelect, onRefresh }: Props) {
                   <Dropdown.Item id="restart">
                     <span className="flex items-center gap-2"><RotateCw className="size-3.5" /> Restart</span>
                   </Dropdown.Item>
+                  <Dropdown.Item id="clone">
+                    <span className="flex items-center gap-2"><Copy className="size-3.5" /> Clone</span>
+                  </Dropdown.Item>
                   <Dropdown.Item id="delete" className="text-red-500">
                     <span className="flex items-center gap-2"><Trash2 className="size-3.5" /> Delete</span>
                   </Dropdown.Item>
@@ -165,5 +172,13 @@ export function AgentCard({ agent, onSelect, onRefresh }: Props) {
         )}
       </div>
     </div>
+    {cloneOpen && (
+      <CloneAgentModal
+        sourceName={agent.name}
+        onClose={() => setCloneOpen(false)}
+        onCloned={() => { setCloneOpen(false); void onRefresh(); }}
+      />
+    )}
+    </>
   );
 }

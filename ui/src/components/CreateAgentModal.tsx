@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button, Modal, Spinner, useOverlayState } from "@heroui/react";
+import { ChevronDown } from "lucide-react";
 import { TYPE_ICON, CHANNEL_ICON } from "./icons";
 
 interface Props {
@@ -16,20 +17,65 @@ const ISOLATION_OPTIONS = [
   { value: "sandboxed", label: "Sandboxed", desc: "Own home dir only" },
 ] as const;
 
-// Types that use OAuth browser login instead of an API key
 const OAUTH_TYPES = new Set<AgentType>(["claude"]);
+const CHANNEL_SUPPORTED = new Set<AgentType>(["claude", "hermes", "openclaw"]);
+const PROVIDER_TYPES = new Set<AgentType>(["hermes", "openclaw"]);
+
+const PROVIDERS = [
+  "openrouter", "anthropic", "openai", "google", "deepseek",
+  "qwen", "nous", "minimax", "moonshot", "huggingface", "zai",
+];
+
+const PROVIDER_KEY_LABELS: Record<string, string> = {
+  openrouter:  "OpenRouter API key",
+  anthropic:   "Anthropic API key",
+  openai:      "OpenAI API key",
+  google:      "Google AI API key",
+  deepseek:    "DeepSeek API key",
+  qwen:        "Qwen API key",
+  nous:        "Nous API key",
+  minimax:     "Minimax API key",
+  moonshot:    "Moonshot API key",
+  huggingface: "HuggingFace API key",
+  zai:         "Zai API key",
+};
+
+const PROVIDER_KEY_PLACEHOLDERS: Record<string, string> = {
+  openrouter:  "sk-or-v1-…",
+  anthropic:   "sk-ant-…",
+  openai:      "sk-…",
+  google:      "AIza…",
+  deepseek:    "sk-…",
+  qwen:        "sk-…",
+  nous:        "sk-…",
+  minimax:     "sk-…",
+  moonshot:    "sk-…",
+  huggingface: "hf_…",
+  zai:         "sk-…",
+};
+
+const PROVIDER_DOCS: Record<string, string> = {
+  openrouter:  "https://openrouter.ai/keys",
+  anthropic:   "https://console.anthropic.com/settings/keys",
+  openai:      "https://platform.openai.com/api-keys",
+  google:      "https://aistudio.google.com/apikey",
+  deepseek:    "https://platform.deepseek.com",
+  qwen:        "https://dashscope.aliyuncs.com",
+  nous:        "https://dashboard.nous.research.ai",
+  minimax:     "https://www.minimax.io",
+  moonshot:    "https://platform.moonshot.cn",
+  huggingface: "https://huggingface.co/settings/tokens",
+  zai:         "https://platform.zhipuai.cn",
+};
 
 const AUTH_HELP: Record<AgentType, { label: string; placeholder: string; docsUrl: string }> = {
   claude:   { label: "Anthropic API key (optional)", placeholder: "sk-ant-api03-…", docsUrl: "https://console.anthropic.com/settings/keys" },
-  codex:    { label: "OpenAI API key",    placeholder: "sk-…",           docsUrl: "https://platform.openai.com/api-keys" },
-  gemini:   { label: "Gemini API key",    placeholder: "AIza…",          docsUrl: "https://aistudio.google.com/apikey" },
-  hermes:   { label: "OpenRouter API key",placeholder: "sk-or-v1-…",     docsUrl: "https://openrouter.ai/keys" },
-  openclaw: { label: "OpenRouter API key",placeholder: "sk-or-v1-…",     docsUrl: "https://openrouter.ai/keys" },
-  opencode: { label: "OpenAI API key",    placeholder: "sk-…",           docsUrl: "https://platform.openai.com/api-keys" },
+  codex:    { label: "OpenAI API key",   placeholder: "sk-…",      docsUrl: "https://platform.openai.com/api-keys" },
+  gemini:   { label: "Gemini API key",   placeholder: "AIza…",     docsUrl: "https://aistudio.google.com/apikey" },
+  hermes:   { label: "API key",          placeholder: "sk-…",      docsUrl: "https://openrouter.ai/keys" },
+  openclaw: { label: "API key",          placeholder: "sk-…",      docsUrl: "https://openrouter.ai/keys" },
+  opencode: { label: "OpenAI API key",   placeholder: "sk-…",      docsUrl: "https://platform.openai.com/api-keys" },
 };
-
-// Types that support Telegram/Discord channels
-const CHANNEL_SUPPORTED = new Set(["claude", "hermes", "openclaw"]);
 
 type Step = "config" | "auth" | "creating";
 
@@ -40,23 +86,25 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
   const [isolation, setIsolation] = useState("admin");
   const [channels, setChannels] = useState("none");
   const [telegramToken, setTelegramToken] = useState("");
+  // Advanced
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [workdir, setWorkdir] = useState("");
 
   // Step 2 state
   const [apiKey, setApiKey] = useState("");
+  const [provider, setProvider] = useState("openrouter");
   const [authNeeded, setAuthNeeded] = useState(false);
-  // OAuth flow state
+  // OAuth
   const [oauthSessionId, setOauthSessionId] = useState<string | null>(null);
   const [oauthUrl, setOauthUrl] = useState<string | null>(null);
   const [oauthPolling, setOauthPolling] = useState(false);
 
-  // Shared state
   const [step, setStep] = useState<Step>("config");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const modalState = useOverlayState({ isOpen: true, onOpenChange: (open) => { if (!open) onClose(); } });
 
-  // Check auth status whenever type changes
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/auth/${type}`)
@@ -67,7 +115,6 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
         setAuthNeeded(status !== "ok");
       })
       .catch(() => {});
-    // Reset channel when switching to a type that doesn't support it
     if (!CHANNEL_SUPPORTED.has(type)) setChannels("none");
     return () => { cancelled = true; };
   }, [type]);
@@ -75,10 +122,11 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
   const handleNext = async () => {
     setError(null);
     if (!name.trim()) { setError("Name is required"); return; }
-    if (authNeeded) {
-      setStep("auth");
+    if (!/^[a-z][a-z0-9-]{0,15}$/.test(name.trim())) {
+      setError("Name must be lowercase letters/digits/hyphens, start with a letter, max 16 chars");
       return;
     }
+    if (authNeeded) { setStep("auth"); return; }
     await doCreate();
   };
 
@@ -107,8 +155,7 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
         const j = await res.json();
         if (!j.ok) return;
         const { state, url } = j.data as { state: string; url: string | null };
-        if (url && !oauthUrl) setOauthUrl(url);
-        if (state === "awaiting_code" && url) setOauthUrl(url);
+        if (url) setOauthUrl(url);
         if (state === "complete") {
           clearInterval(interval);
           setOauthPolling(false);
@@ -132,7 +179,10 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
       const authRes = await fetch(`/api/auth/${type}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: apiKey.trim() }),
+        body: JSON.stringify({
+          apiKey: apiKey.trim(),
+          ...(PROVIDER_TYPES.has(type) ? { provider } : {}),
+        }),
       });
       const authJ = await authRes.json();
       if (!authJ.ok) {
@@ -157,7 +207,14 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
       const res = await fetch("/api/agents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), type, isolation, channels, telegramToken }),
+        body: JSON.stringify({
+          name: name.trim(),
+          type,
+          isolation,
+          channels,
+          telegramToken,
+          ...(workdir.trim() ? { workdir: workdir.trim() } : {}),
+        }),
       });
       const j = await res.json();
       if (j.ok) {
@@ -175,12 +232,21 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
     }
   };
 
-  const authHelp = AUTH_HELP[type];
+  const isProviderType = PROVIDER_TYPES.has(type);
+  const effectiveKeyLabel = isProviderType
+    ? (PROVIDER_KEY_LABELS[provider] ?? "API key")
+    : AUTH_HELP[type].label;
+  const effectiveKeyPlaceholder = isProviderType
+    ? (PROVIDER_KEY_PLACEHOLDERS[provider] ?? "sk-…")
+    : AUTH_HELP[type].placeholder;
+  const effectiveDocsUrl = isProviderType
+    ? (PROVIDER_DOCS[provider] ?? "#")
+    : AUTH_HELP[type].docsUrl;
 
   return (
     <Modal state={modalState}>
       <Modal.Backdrop>
-        <Modal.Container size="md" placement="center" className="sm:max-w-md">
+        <Modal.Container size="md" placement="center" className="sm:max-w-[480px]">
           <Modal.Dialog className="p-0">
 
             {/* Header */}
@@ -189,7 +255,6 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
                 <button
                   onClick={() => { setStep("config"); setError(null); }}
                   className="text-ink-muted hover:text-ink"
-                  aria-label="Back"
                   disabled={step === "creating"}
                 >
                   ←
@@ -203,12 +268,11 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
                 </h2>
                 {step !== "creating" && (
                   <p className="text-[0.75rem] text-ink-muted">
-                    {step === "config" && (authNeeded ? `Step 1 of 2 — ${type} needs an API key` : "Configure your agent")}
-                    {step === "auth" && "Step 2 of 2 — enter your API key"}
+                    {step === "config" && (authNeeded ? "Step 1 of 2 — configure" : "Configure your agent")}
+                    {step === "auth" && `Step 2 of 2 — authenticate ${type}`}
                   </p>
                 )}
               </div>
-              {/* Step dots */}
               {authNeeded && step !== "creating" && (
                 <div className="ml-auto flex gap-1.5">
                   <div className={`size-1.5 rounded-full ${step === "config" ? "bg-signal" : "bg-border-hard"}`} />
@@ -220,6 +284,7 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
             {/* Step 1: Config */}
             {step === "config" && (
               <div className="flex flex-col gap-5 px-6 py-5">
+                {/* Name */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[0.8125rem] font-medium text-ink">Name</label>
                   <input
@@ -229,8 +294,10 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
                     autoFocus
                     className="rounded-xl border border-border-subtle bg-surface-card px-3.5 py-2.5 text-[0.875rem] text-ink outline-none focus:border-signal"
                   />
+                  <p className="text-[0.7rem] text-ink-muted">Lowercase, letters/digits/hyphens, starts with a letter, max 16 chars</p>
                 </div>
 
+                {/* Type */}
                 <div className="flex flex-col gap-1.5">
                   <span className="text-[0.8125rem] font-medium text-ink">Type</span>
                   <div className="grid grid-cols-3 gap-2">
@@ -251,6 +318,7 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
                   </div>
                 </div>
 
+                {/* Isolation */}
                 <div className="flex flex-col gap-1.5">
                   <span className="text-[0.8125rem] font-medium text-ink">Isolation</span>
                   <div className="grid grid-cols-3 gap-2">
@@ -273,6 +341,7 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
                   </div>
                 </div>
 
+                {/* Channel */}
                 {CHANNEL_SUPPORTED.has(type) && (
                   <div className="flex flex-col gap-1.5">
                     <span className="text-[0.8125rem] font-medium text-ink">Channel</span>
@@ -311,6 +380,30 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
                   </div>
                 )}
 
+                {/* Advanced toggle */}
+                <button
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="flex items-center gap-1.5 self-start text-[0.8125rem] text-ink-muted hover:text-ink"
+                >
+                  <ChevronDown className={`size-3.5 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
+                  Advanced options
+                </button>
+
+                {showAdvanced && (
+                  <div className="flex flex-col gap-4 rounded-xl bg-surface-raised p-4">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[0.8125rem] font-medium text-ink">Working directory</label>
+                      <input
+                        value={workdir}
+                        onChange={(e) => setWorkdir(e.target.value)}
+                        placeholder="/home/claude/projects"
+                        className="rounded-xl border border-border-subtle bg-surface-card px-3.5 py-2.5 font-mono text-[0.8125rem] text-ink outline-none focus:border-signal"
+                      />
+                      <p className="text-[0.7rem] text-ink-muted">Default: /home/claude/projects</p>
+                    </div>
+                  </div>
+                )}
+
                 {error && <p className="text-[0.8125rem] text-red-500">{error}</p>}
               </div>
             )}
@@ -323,22 +416,21 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
                     {(() => { const I = TYPE_ICON[type] ?? TYPE_ICON.claude; return <I className="size-5" />; })()}
                   </div>
                   <div>
-                    <p className="text-[0.875rem] font-medium text-ink">{type}</p>
+                    <p className="text-[0.875rem] font-medium text-ink capitalize">{type}</p>
                     <p className="text-[0.75rem] text-ink-secondary">Not yet authenticated on this machine</p>
                   </div>
                 </div>
 
                 {OAUTH_TYPES.has(type) ? (
-                  /* OAuth flow */
                   <div className="flex flex-col gap-3">
                     {!oauthUrl ? (
                       <p className="text-[0.8125rem] text-ink-secondary">
-                        Sign in with your Claude account to authenticate this agent.
+                        Sign in with your Claude account. A browser window will open.
                       </p>
                     ) : (
                       <>
                         <p className="text-[0.8125rem] text-ink-secondary">
-                          A browser window will open. Sign in, then return here — this page will update automatically.
+                          Sign in, then return here — this page updates automatically.
                         </p>
                         <a
                           href={oauthUrl}
@@ -359,31 +451,54 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
                     )}
                   </div>
                 ) : (
-                  /* API key flow */
-                  <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between">
-                      <label className="text-[0.8125rem] font-medium text-ink">{authHelp.label}</label>
-                      <a
-                        href={authHelp.docsUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[0.75rem] text-signal hover:underline"
-                      >
-                        Get key →
-                      </a>
+                  <div className="flex flex-col gap-3">
+                    {/* Provider selector for hermes/openclaw */}
+                    {isProviderType && (
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[0.8125rem] font-medium text-ink">Provider</label>
+                        <div className="relative">
+                          <select
+                            value={provider}
+                            onChange={(e) => setProvider(e.target.value)}
+                            className="w-full appearance-none rounded-xl border border-border-subtle bg-surface-card px-3.5 py-2.5 pr-9 text-[0.875rem] text-ink outline-none focus:border-signal"
+                          >
+                            {PROVIDERS.map((p) => (
+                              <option key={p} value={p}>{p}</option>
+                            ))}
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-ink-muted" />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* API key input */}
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[0.8125rem] font-medium text-ink">{effectiveKeyLabel}</label>
+                        <a
+                          href={effectiveDocsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[0.75rem] text-signal hover:underline"
+                        >
+                          Get key →
+                        </a>
+                      </div>
+                      <input
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder={effectiveKeyPlaceholder}
+                        type="password"
+                        autoFocus
+                        className="rounded-xl border border-border-subtle bg-surface-card px-3.5 py-2.5 font-mono text-[0.8125rem] text-ink outline-none focus:border-signal"
+                        onKeyDown={(e) => { if (e.key === "Enter") void handleAuthAndCreate(); }}
+                      />
+                      {!isProviderType && (
+                        <p className="text-[0.75rem] text-ink-muted">
+                          Stored in <code className="rounded bg-surface-raised px-1">/etc/5dive/connectors/{type}.env</code>
+                        </p>
+                      )}
                     </div>
-                    <input
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder={authHelp.placeholder}
-                      type="password"
-                      autoFocus
-                      className="rounded-xl border border-border-subtle bg-surface-card px-3.5 py-2.5 font-mono text-[0.8125rem] text-ink outline-none focus:border-signal"
-                      onKeyDown={(e) => { if (e.key === "Enter") void handleAuthAndCreate(); }}
-                    />
-                    <p className="text-[0.75rem] text-ink-muted">
-                      Stored in <code className="rounded bg-surface-raised px-1">/etc/5dive/connectors/{type}.env</code>
-                    </p>
                   </div>
                 )}
 
@@ -391,13 +506,11 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
               </div>
             )}
 
-            {/* Step creating */}
+            {/* Creating */}
             {step === "creating" && (
               <div className="flex flex-col items-center gap-3 px-6 py-10">
                 <Spinner size="lg" />
-                <p className="text-[0.875rem] text-ink-secondary">
-                  {busy ? `Creating ${name}…` : "Almost there…"}
-                </p>
+                <p className="text-[0.875rem] text-ink-secondary">Creating {name}…</p>
               </div>
             )}
 
@@ -413,11 +526,7 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
                   </Button>
                 )}
                 {step === "auth" && OAUTH_TYPES.has(type) && !oauthUrl && (
-                  <Button
-                    className="bg-signal text-white"
-                    isDisabled={busy}
-                    onPress={() => void startOAuth()}
-                  >
+                  <Button className="bg-signal text-white" isDisabled={busy} onPress={() => void startOAuth()}>
                     {busy ? <Spinner size="sm" /> : null}
                     Sign in with Claude
                   </Button>
