@@ -3,6 +3,7 @@ import { Button } from "@heroui/react";
 import { AgentList } from "./components/AgentList";
 import { CreateAgentModal } from "./components/CreateAgentModal";
 import { AgentDetail } from "./components/AgentDetail";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LogoMark } from "./components/Logo";
 import type { Agent } from "./types";
 
@@ -54,6 +55,7 @@ export default function App() {
 
       {/* Main */}
       <main className="mx-auto max-w-5xl px-6 py-8">
+        <ErrorBoundary>
         {loading ? (
           <div className="flex items-center justify-center py-24">
             <div className="size-5 animate-spin rounded-full border-2 border-border-subtle border-t-signal" />
@@ -82,6 +84,7 @@ export default function App() {
             />
           </>
         )}
+        </ErrorBoundary>
       </main>
 
       {createOpen && (

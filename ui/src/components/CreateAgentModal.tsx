@@ -43,7 +43,8 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
       if (j.ok) {
         onCreated();
       } else {
-        setError(j.error ?? "Failed to create agent");
+        const e = j.error;
+        setError(typeof e === "string" ? e : (e?.message ?? "Failed to create agent"));
       }
     } finally {
       setCreating(false);
