@@ -10,7 +10,6 @@ export {
   Square,
   RotateCw,
   Trash2,
-  ChevronLeft,
   ArrowLeft,
   RefreshCw,
   Terminal,
@@ -20,14 +19,30 @@ export {
   ExternalLink,
 } from "lucide-react";
 
-import type { LucideIcon } from "lucide-react";
-import { Bot, Code2, Sparkles, Zap, Bird, Wrench } from "lucide-react";
+import type { ComponentType, SVGProps } from "react";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  GeminiIcon,
+  HermesIcon,
+  OpenClawIcon,
+  OpenCodeIcon,
+  TelegramIcon,
+  DiscordIcon,
+} from "./brand-icons";
 
-export const TYPE_ICON: Record<string, LucideIcon> = {
-  claude:   Bot,
-  codex:    Code2,
-  gemini:   Sparkles,
-  hermes:   Zap,
-  openclaw: Bird,
-  opencode: Wrench,
+type IconComponent = ComponentType<{ className?: string } & SVGProps<SVGSVGElement>>;
+
+export const TYPE_ICON: Record<string, IconComponent> = {
+  claude:   ClaudeIcon,
+  codex:    CodexIcon,
+  gemini:   GeminiIcon,
+  hermes:   HermesIcon,
+  openclaw: OpenClawIcon,
+  opencode: OpenCodeIcon,
+};
+
+export const CHANNEL_ICON: Record<string, IconComponent> = {
+  telegram: TelegramIcon,
+  discord:  DiscordIcon,
 };

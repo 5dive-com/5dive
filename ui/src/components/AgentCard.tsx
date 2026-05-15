@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button, Chip, Dropdown, Spinner } from "@heroui/react";
 import { MoreVertical, RotateCw, Square, Play, Trash2 } from "lucide-react";
 import type { Agent } from "../types";
-import { TYPE_ICON } from "./icons";
+import { TYPE_ICON, CHANNEL_ICON } from "./icons";
 import { StatusDot } from "./StatusDot";
 import { TypeBadge } from "./TypeBadge";
 
@@ -79,12 +79,18 @@ export function AgentCard({ agent, onSelect, onRefresh }: Props) {
         </div>
         <div className="flex items-center gap-2 text-[0.75rem] text-ink-secondary">
           <TypeBadge type={agent.type} />
-          {agent.channels && agent.channels !== "none" && (
-            <>
-              <span className="text-border-hard">·</span>
-              <span className="capitalize">{agent.channels}</span>
-            </>
-          )}
+          {agent.channels && agent.channels !== "none" && (() => {
+            const CIcon = CHANNEL_ICON[agent.channels];
+            return (
+              <>
+                <span className="text-border-hard">·</span>
+                {CIcon
+                  ? <CIcon className="size-3 shrink-0" />
+                  : null}
+                <span className="capitalize">{agent.channels}</span>
+              </>
+            );
+          })()}
         </div>
       </div>
 

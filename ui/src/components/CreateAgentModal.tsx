@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button, Modal, Spinner, useOverlayState } from "@heroui/react";
-import { TYPE_ICON } from "./icons";
+import { TYPE_ICON, CHANNEL_ICON } from "./icons";
 
 interface Props {
   onClose: () => void;
@@ -227,16 +227,27 @@ export function CreateAgentModal({ onClose, onCreated }: Props) {
 
                 {CHANNEL_SUPPORTED.has(type) && (
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[0.8125rem] font-medium text-ink">Channel</label>
-                    <select
-                      value={channels}
-                      onChange={(e) => setChannels(e.target.value)}
-                      className="rounded-xl border border-border-subtle bg-surface-card px-3.5 py-2.5 text-[0.875rem] text-ink outline-none focus:border-signal"
-                    >
-                      <option value="none">None (terminal only)</option>
-                      <option value="telegram">Telegram</option>
-                      <option value="discord">Discord</option>
-                    </select>
+                    <span className="text-[0.8125rem] font-medium text-ink">Channel</span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([
+                        { value: "none",     label: "None",     Icon: null },
+                        { value: "telegram", label: "Telegram", Icon: CHANNEL_ICON.telegram },
+                        { value: "discord",  label: "Discord",  Icon: CHANNEL_ICON.discord },
+                      ] as const).map(({ value, label, Icon }) => (
+                        <button
+                          key={value}
+                          onClick={() => setChannels(value)}
+                          className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-[0.8125rem] font-medium transition-colors ${
+                            channels === value
+                              ? "border-signal bg-signal-soft text-signal"
+                              : "border-border-subtle text-ink-secondary hover:bg-surface-raised"
+                          }`}
+                        >
+                          {Icon ? <Icon className="size-3.5 shrink-0" /> : <span className="size-3.5" />}
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
 
