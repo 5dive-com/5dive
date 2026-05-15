@@ -80,6 +80,43 @@ const server = Bun.serve({
       return Response.json(result, { headers });
     }
 
+    // POST /api/doctor/repair
+    if (req.method === "POST" && path === "/api/doctor/repair") {
+      const result = await runCLI("doctor", "--repair");
+      return Response.json(result, { headers });
+    }
+
+    // GET /api/accounts
+    if (req.method === "GET" && path === "/api/accounts") {
+      const result = await runCLI("account", "list");
+      return Response.json(result, { headers });
+    }
+
+    // POST /api/accounts  { name }
+    if (req.method === "POST" && path === "/api/accounts") {
+      const body = await req.json() as { name: string };
+      const result = await runCLI("account", "add", body.name);
+      return Response.json(result, { headers });
+    }
+
+    const accountMatch = path.match(/^\/api\/accounts\/([^/]+)$/);
+    if (accountMatch) {
+      const name = decodeURIComponent(accountMatch[1]);
+      if (req.method === "GET") {
+        const result = await runCLI("account", "show", name);
+        return Response.json(result, { headers });
+      }
+      if (req.method === "DELETE") {
+        const result = await runCLI("account", "remove", name);
+        return Response.json(result, { headers });
+      }
+      if (req.method === "PATCH") {
+        const body = await req.json() as { name: string };
+        const result = await runCLI("account", "rename", name, body.name);
+        return Response.json(result, { headers });
+      }
+    }
+
     // GET /api/auth/:type  — check auth status
     const authMatch = path.match(/^\/api\/auth\/([^/]+)$/);
     if (authMatch) {
@@ -128,6 +165,14 @@ const server = Bun.serve({
       }
     }
 
+    // POST /api/agent/install/:type
+    const installMatch = path.match(/^\/api\/agent\/install\/([^/]+)$/);
+    if (installMatch && req.method === "POST") {
+      const type = installMatch[1];
+      const result = await runCLI("agent", "install", type);
+      return Response.json(result, { headers });
+    }
+
     // POST /api/agents  (create)
     if (req.method === "POST" && path === "/api/agents") {
       const body = await req.json() as Record<string, string>;
@@ -166,6 +211,33 @@ const server = Bun.serve({
       if (req.method === "POST" && action === "send") {
         const body = await req.json() as { text: string };
         const result = await runCLI("agent", "send", name, body.text);
+        return Response.json(result, { headers });
+      }
+
+      // POST /api/agents/:name/config  { key, value }
+      if (req.method === "POST" && action === "config") {
+        const body = await req.json() as { key: string; value: string };
+        const result = await runCLI("agent", "config", name, "set", `${body.key}=${body.value}`);
+        return Response.json(result, { headers });
+      }
+
+      // POST /api/agents/:name/clone  { newName, channels?, telegramToken?, workdir? }
+      if (req.method === "POST" && action === "clone") {
+        const body = await req.json() as Record<string, string>;
+        const args = ["agent", "clone", name, body.newName];
+        if (body.channels) args.push(`--channels=${body.channels}`);
+        if (body.telegramToken) args.push(`--telegram-token=${body.telegramToken}`);
+        if (body.workdir) args.push(`--workdir=${body.workdir}`);
+        const result = await runCLI(...args);
+        return Response.json(result, { headers });
+      }
+
+      // POST /api/agents/:name/ask  { text }
+      if (req.method === "POST" && action === "ask") {
+        const body = await req.json() as { text: string; timeout?: number };
+        const args = ["agent", "ask", name, body.text];
+        if (body.timeout) args.push(`--timeout=${body.timeout}`);
+        const result = await runCLI(...args);
         return Response.json(result, { headers });
       }
 

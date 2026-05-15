@@ -3,13 +3,35 @@ import { Bot, RefreshCw } from "lucide-react";
 import type { Agent } from "../types";
 import { AgentCard } from "./AgentCard";
 
+function SkeletonRow() {
+  return (
+    <div className="flex items-center gap-4 rounded-xl border border-border-subtle bg-surface-card px-4 py-3.5">
+      <div className="size-11 shrink-0 rounded-xl bg-surface-raised animate-pulse" />
+      <div className="flex flex-1 flex-col gap-2">
+        <div className="h-4 w-32 rounded-md bg-surface-raised animate-pulse" />
+        <div className="h-3 w-20 rounded-md bg-surface-raised animate-pulse" />
+      </div>
+    </div>
+  );
+}
+
 interface Props {
-  agents: Agent[];
+  agents: Agent[] | null;
   onSelect: (agent: Agent) => void;
   onRefresh: () => void;
 }
 
 export function AgentList({ agents, onSelect, onRefresh }: Props) {
+  if (agents === null) {
+    return (
+      <div className="flex flex-col gap-2">
+        <SkeletonRow />
+        <SkeletonRow />
+        <SkeletonRow />
+      </div>
+    );
+  }
+
   if (agents.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
@@ -18,7 +40,7 @@ export function AgentList({ agents, onSelect, onRefresh }: Props) {
         </div>
         <p className="text-[0.9375rem] font-semibold text-ink">No agents yet</p>
         <p className="max-w-xs text-[0.8125rem] text-ink-secondary">
-          Create your first agent with the button above, or run{" "}
+          Create your first agent with the button in the sidebar, or run{" "}
           <code className="rounded bg-surface-raised px-1 font-mono text-[0.75rem]">
             5dive agent create my-agent --type=claude
           </code>{" "}

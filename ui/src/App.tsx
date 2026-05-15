@@ -1,25 +1,25 @@
 import { useState, useEffect, useCallback } from "react";
-import { Button } from "@heroui/react";
-import { AgentList } from "./components/AgentList";
+import { Sidebar } from "./components/Sidebar";
 import { CreateAgentModal } from "./components/CreateAgentModal";
-import { AgentDetail } from "./components/AgentDetail";
-import { ErrorBoundary } from "./components/ErrorBoundary";
-import { LogoMark } from "./components/Logo";
-import type { Agent } from "./types";
+import { AgentsPage } from "./pages/AgentsPage";
+import { AccountsPage } from "./pages/AccountsPage";
+import { HealthPage } from "./pages/HealthPage";
+import { ToastProvider } from "./context/ToastContext";
+import type { Agent, Page } from "./types";
 
 export default function App() {
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [agents, setAgents] = useState<Agent[] | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [selected, setSelected] = useState<Agent | null>(null);
+  const [page, setPage] = useState<Page>("agents");
 
   const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/agents");
       const json = await res.json();
       if (json.ok) setAgents(json.data ?? []);
-    } finally {
-      setLoading(false);
+    } catch {
+      setAgents([]);
     }
   }, []);
 
@@ -29,73 +29,46 @@ export default function App() {
     return () => clearInterval(id);
   }, [refresh]);
 
+  const handleNavigate = (p: Page) => {
+    setPage(p);
+    if (p !== "agents") setSelected(null);
+  };
+
   return (
-    <div className="min-h-screen bg-surface-page">
-      {/* Header */}
-      <header className="sticky top-0 z-20 border-b border-border-subtle bg-surface-card/80 backdrop-blur-lg">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-6">
-          <div className="flex items-center gap-2.5">
-            <LogoMark className="size-7 shrink-0" />
-            <span className="text-[0.9375rem] font-semibold tracking-tight text-ink">
-              5dive
-            </span>
-            <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[0.6875rem] font-medium text-ink-muted">
-              local
-            </span>
-          </div>
-          <Button
-            size="sm"
-            className="bg-signal text-white"
-            onPress={() => setCreateOpen(true)}
-          >
-            + New agent
-          </Button>
-        </div>
-      </header>
-
-      {/* Main */}
-      <main className="mx-auto max-w-5xl px-6 py-8">
-        <ErrorBoundary>
-        {loading ? (
-          <div className="flex items-center justify-center py-24">
-            <div className="size-5 animate-spin rounded-full border-2 border-border-subtle border-t-signal" />
-          </div>
-        ) : selected ? (
-          <AgentDetail
-            agent={selected}
-            onBack={() => setSelected(null)}
-            onRefresh={refresh}
-          />
-        ) : (
-          <>
-            <div className="mb-6 flex flex-col gap-1">
-              <h1 className="text-[1.25rem] font-semibold tracking-tight text-ink">
-                Agents
-              </h1>
-              <p className="text-[0.875rem] text-ink-secondary">
-                Manage your AI agents running on this machine.
-              </p>
-            </div>
-            <hr className="mb-6 border-border-subtle" />
-            <AgentList
-              agents={agents}
-              onSelect={setSelected}
-              onRefresh={refresh}
-            />
-          </>
-        )}
-        </ErrorBoundary>
-      </main>
-
-      {createOpen && (
-        <CreateAgentModal
-          onClose={() => setCreateOpen(false)}
-          onCreated={() => {
-            setCreateOpen(false);
-            void refresh();
-          }}
+    <ToastProvider>
+      <div className="flex h-screen overflow-hidden bg-surface-page">
+        <Sidebar
+          page={page}
+          onNavigate={handleNavigate}
+          onNewAgent={() => setCreateOpen(true)}
         />
-      )}
-    </div>
+
+        <main className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-3xl px-8 py-8">
+            {page === "agents" && (
+              <AgentsPage
+                agents={agents}
+                selected={selected}
+                onSelect={(agent) => { setSelected(agent); setPage("agents"); }}
+                onBack={() => setSelected(null)}
+                onRefresh={refresh}
+              />
+            )}
+            {page === "accounts" && <AccountsPage />}
+            {page === "health" && <HealthPage />}
+          </div>
+        </main>
+
+        {createOpen && (
+          <CreateAgentModal
+            onClose={() => setCreateOpen(false)}
+            onCreated={() => {
+              setCreateOpen(false);
+              void refresh();
+            }}
+          />
+        )}
+      </div>
+    </ToastProvider>
   );
 }
