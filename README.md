@@ -26,10 +26,12 @@ No telemetry. The CLI does not phone home, send usage data, or report errors any
 
 ## Quickstart
 
-**1. Install**
+**1. Install** (or upgrade an existing install with `bash -s -- --upgrade`)
 ```sh
 curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash
 ```
+
+Rerunning the installer is safe — it won't touch your registry, auth profiles, or agents. `--upgrade` skips apt/nvm/bun entirely and only refreshes the CLI binaries, systemd unit, and hooks.
 
 **2. Add credentials**
 ```sh

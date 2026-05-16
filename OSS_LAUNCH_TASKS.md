@@ -18,11 +18,6 @@ Resume prompt: `continue OSS launch tasks from 5dive-cli/OSS_LAUNCH_TASKS.md —
 
 ## P1 — CLI hygiene (small, high-signal for OSS)
 
-### 13. Idempotent install / `install.sh --upgrade`
-Verify rerunning `install.sh` on a populated host doesn't clobber registry,
-auth profiles, or agents. Add an explicit `--upgrade` path that only refreshes
-binaries and the systemd unit. Add a smoke test.
-
 ### 14. Run `5dive doctor` after install
 Append `5dive doctor` to the end of `install.sh` so the user sees their health
 state immediately. Fail-soft if any check fails.
