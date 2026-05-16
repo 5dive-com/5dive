@@ -84,6 +84,24 @@ Or wire it to a Telegram bot so you can message it from your phone — [BotFathe
 
 ---
 
+## Try it in Docker (no host install)
+
+Kick the tires without touching your host. Build the demo image from the repo
+root, run it `--privileged` (systemd-in-Docker), exec in, use `5dive` as
+normal:
+
+```sh
+docker build -f docker/Dockerfile -t 5dive .
+docker run -d --name 5dive-demo --privileged 5dive
+docker exec -it 5dive-demo bash
+```
+
+See [docker/README.md](docker/README.md) for dashboard port-forwarding,
+caveats, and teardown. This path is for evaluation only — for real use,
+install on a host.
+
+---
+
 ## Supported agent types
 
 | Type | Model family | Auth method |

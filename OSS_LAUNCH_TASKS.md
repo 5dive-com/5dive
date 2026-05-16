@@ -18,7 +18,6 @@ Resume prompt: `continue OSS launch tasks from 5dive-cli/OSS_LAUNCH_TASKS.md —
 
 ## P3 — Day-2 (post-launch, ordered by likely demand)
 
-### 23. Docker `docker run` one-liner for tire-kickers who don't want root install
 ### 24. `--user` mode (tmux-managed, no systemd)
 ### 25. Offline / air-gapped install (release tarball + manual steps)
 ### 26b. UI_TASKS T11 — "Install" button in Health for missing type binaries (T10 health page itself is done)
