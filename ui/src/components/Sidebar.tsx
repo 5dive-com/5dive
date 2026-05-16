@@ -1,6 +1,7 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { Bot, Users, Activity, ChevronLeft, Plus } from "lucide-react";
+import { Bot, Users, Activity, ChevronLeft, ChevronRight, Plus, LogOut } from "lucide-react";
 import { LogoMark } from "./Logo";
+import { useAuth } from "../context/AuthContext";
 import type { Page } from "../types";
 
 const STORAGE_KEY = "sidebar-collapsed";
@@ -40,6 +41,8 @@ interface Props {
 
 export function Sidebar({ page, onNavigate, onNewAgent }: Props) {
   const [collapsed, toggle] = useSidebarCollapsed();
+  const { mode, authenticated, logout } = useAuth();
+  const showLogout = mode === "password" && authenticated;
 
   return (
     <>
@@ -106,16 +109,26 @@ export function Sidebar({ page, onNavigate, onNewAgent }: Props) {
           })}
         </nav>
 
-        {/* Collapse toggle */}
-        <div className="shrink-0 p-2 border-t border-border-subtle">
+        {/* Footer: logout (when authed) + collapse toggle */}
+        <div className="shrink-0 border-t border-border-subtle p-2">
+          {showLogout && (
+            <button
+              onClick={() => void logout()}
+              title={collapsed ? "Sign out" : undefined}
+              className={`mb-1 flex items-center gap-2.5 rounded-lg px-2 py-2 text-[0.8125rem] font-medium text-ink-secondary transition-colors hover:bg-surface-raised hover:text-ink ${
+                collapsed ? "w-full justify-center" : "w-full"
+              }`}
+            >
+              <LogOut className="size-4 shrink-0" />
+              {!collapsed && <span>Sign out</span>}
+            </button>
+          )}
           <button
             onClick={toggle}
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             className="flex w-full items-center justify-center rounded-lg py-1.5 text-ink-muted hover:bg-surface-raised hover:text-ink"
           >
-            <ChevronLeft
-              className={`size-4 transition-transform duration-200 ${collapsed ? "rotate-180" : ""}`}
-            />
+            {collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
           </button>
         </div>
       </aside>

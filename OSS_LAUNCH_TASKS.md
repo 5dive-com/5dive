@@ -14,12 +14,6 @@ Resume prompt: `continue OSS launch tasks from 5dive-cli/OSS_LAUNCH_TASKS.md —
 > Item numbers are stable — completed items are removed but the surviving
 > items keep their original IDs so they're easy to refer to in chat / commits.
 
-### 6. UI onboarding: first-run setup + login screens
-- If `auth.mode=password` and no `passwordHash` set → SPA shows full-screen
-  "Set admin password" form. POST `/api/setup` writes config, issues cookie.
-- If `passwordHash` set and no valid cookie → login screen.
-- Logout button in sidebar footer.
-
 ### 7. UI onboarding: empty-state agent wizard
 When `agents.length === 0` after auth, show a "Create your first agent"
 walkthrough instead of a blank dashboard:
