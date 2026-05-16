@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 5dive CLI installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash
+# 5dive CLI installer / uninstaller
+# Install:   curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash
+# Uninstall: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash -s -- --uninstall
 set -euo pipefail
 
 REPO="https://raw.githubusercontent.com/5dive-com/5dive-cli/main"
@@ -8,6 +9,7 @@ BIN_DIR="/usr/local/bin"
 STATE_DIR="/var/lib/5dive"
 CONNECTORS_DIR="/etc/5dive/connectors"
 SYSTEMD_DIR="/etc/systemd/system"
+LIB_DIR="/usr/local/lib/5dive"
 NODE_VERSION="22"
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -15,6 +17,91 @@ ok()  { echo "  ✓ $*"; }
 say() { echo "→ $*"; }
 
 [[ $EUID -eq 0 ]] || die "run as root: curl -fsSL ... | sudo bash"
+
+# --- Subcommand dispatch ---------------------------------------------------
+
+if [[ "${1:-}" == "--uninstall" ]]; then
+  shift
+  PURGE=0
+  YES=0
+  for a in "$@"; do
+    case "$a" in
+      --purge) PURGE=1 ;;
+      --yes|-y) YES=1 ;;
+      *) die "unknown uninstall flag: $a" ;;
+    esac
+  done
+
+  say "Uninstalling 5dive CLI"
+
+  # 1. Stop + remove any running agents — leaves /var/lib/5dive/agents.json
+  # consistent so an --upgrade reinstall could restore the registry. With
+  # --purge we wipe everything anyway.
+  if command -v 5dive >/dev/null 2>&1; then
+    if [[ -f "$STATE_DIR/agents.json" ]]; then
+      mapfile -t AGENT_NAMES < <(jq -r '.agents | keys[]?' "$STATE_DIR/agents.json" 2>/dev/null || true)
+      if [[ ${#AGENT_NAMES[@]} -gt 0 ]]; then
+        say "Stopping ${#AGENT_NAMES[@]} agent(s)"
+        if [[ $YES -eq 0 ]]; then
+          printf "    %s\n" "${AGENT_NAMES[@]}"
+          read -r -p "  remove these agents? [y/N] " ans
+          [[ "$ans" =~ ^[yY] ]] || die "aborted"
+        fi
+        for n in "${AGENT_NAMES[@]}"; do
+          5dive agent rm "$n" >/dev/null 2>&1 || true
+          ok "removed agent $n"
+        done
+      fi
+    fi
+  fi
+
+  # 2. systemd template + reload
+  if [[ -f "$SYSTEMD_DIR/5dive-agent@.service" ]]; then
+    rm -f "$SYSTEMD_DIR/5dive-agent@.service"
+    systemctl daemon-reload || true
+    ok "removed systemd template"
+  fi
+
+  # 3. Binaries + shared libs
+  rm -f "$BIN_DIR/5dive" "$BIN_DIR/5dive-agent-start"
+  ok "removed CLI binaries"
+  if [[ -d "$LIB_DIR" ]]; then
+    rm -rf "$LIB_DIR"
+    ok "removed $LIB_DIR (hooks, skills, ui)"
+  fi
+
+  # 4. State / connector / claude user — keep by default; --purge wipes.
+  if [[ $PURGE -eq 1 ]]; then
+    if [[ $YES -eq 0 ]]; then
+      echo
+      echo "  --purge will permanently delete:"
+      [[ -d "$STATE_DIR" ]] && echo "    $STATE_DIR (registry, auth profiles, audit log)"
+      [[ -d "$CONNECTORS_DIR" ]] && echo "    $CONNECTORS_DIR (telegram/discord bot tokens)"
+      id -u claude >/dev/null 2>&1 && echo "    user 'claude' and /home/claude"
+      read -r -p "  continue? [y/N] " ans
+      [[ "$ans" =~ ^[yY] ]] || die "aborted"
+    fi
+    rm -rf "$STATE_DIR" "$CONNECTORS_DIR"
+    ok "removed state + connector dirs"
+    if id -u claude >/dev/null 2>&1; then
+      userdel -r claude 2>/dev/null || userdel claude 2>/dev/null || true
+      ok "removed user 'claude'"
+    fi
+    getent group claude >/dev/null 2>&1 && groupdel claude 2>/dev/null && ok "removed group 'claude'" || true
+  else
+    echo
+    say "kept (run again with --purge to remove):"
+    [[ -d "$STATE_DIR" ]] && echo "    $STATE_DIR"
+    [[ -d "$CONNECTORS_DIR" ]] && echo "    $CONNECTORS_DIR"
+    id -u claude >/dev/null 2>&1 && echo "    user 'claude'"
+  fi
+
+  echo
+  echo "5dive uninstalled."
+  exit 0
+fi
+
+# --- Install (default) -----------------------------------------------------
 
 say "Installing 5dive CLI"
 

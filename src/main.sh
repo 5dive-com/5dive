@@ -9,6 +9,10 @@ Global flags:
                                       ({ok:true,data:...} | {ok:false,error:{...}}).
                                       Works on any subcommand below.
 
+Maintenance:
+  5dive --version                                    # print version
+  5dive uninstall [--purge] [--yes]                  # remove 5dive (--purge also wipes state + user)
+
 Live dashboard:
   5dive watch [--interval=N]                         # htop-style live view of every agent;
                                                      # ↑↓ select, ↵ attach, r refresh, q quit.
@@ -377,6 +381,21 @@ main() {
         exec env "${ui_env[@]}" bun run server.ts
       else
         exec bun run server.ts
+      fi ;;
+    uninstall)
+      # Thin wrapper: fetch install.sh and exec --uninstall. Keeps a single
+      # source of truth for what gets removed (install.sh) and dodges the
+      # "old bundles ship stale uninstall logic" problem.
+      [[ $EUID -eq 0 ]] || fail "$E_PERMISSION" "uninstall must run as root (sudo 5dive uninstall)"
+      local installer
+      if command -v curl >/dev/null 2>&1; then
+        installer=$(mktemp)
+        curl -fsSL "https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh" -o "$installer" \
+          || fail "$E_GENERIC" "failed to fetch installer"
+        chmod +x "$installer"
+        exec bash "$installer" --uninstall "$@"
+      else
+        fail "$E_NOT_FOUND" "curl is required for 5dive uninstall"
       fi ;;
     -h|--help|help) usage ;;
     *) fail "$E_USAGE" "unknown command: $top" ;;

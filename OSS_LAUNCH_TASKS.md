@@ -18,12 +18,6 @@ Resume prompt: `continue OSS launch tasks from 5dive-cli/OSS_LAUNCH_TASKS.md —
 
 ## P1 — CLI hygiene (small, high-signal for OSS)
 
-### 10. `5dive uninstall` (or `install.sh --uninstall`)
-Remove `/usr/local/bin/5dive`, `/usr/local/bin/5dive-agent-start`,
-`/usr/local/lib/5dive`, `/etc/systemd/system/5dive-agent@.service`. Prompt
-before deleting `/var/lib/5dive` and the `claude` user (default: keep). Run
-`systemctl daemon-reload` after.
-
 ### 11. `5dive init` — first-run wizard
 Interactive: pick a type → run `agent install <type>` if missing → auth flow →
 create first agent → send "hello" and tail the reply. Single command from the
