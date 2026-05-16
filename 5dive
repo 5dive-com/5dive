@@ -536,6 +536,9 @@ STOP_FAILURE_HOOK="/usr/local/lib/5dive/stop-failure-telegram.sh"
 # in telegram-paired sessions (their pickers are tmux-only — Telegram users
 # never see them and the agent hangs).
 PRETOOL_TELEGRAM_HOOK="/usr/local/lib/5dive/pretool-telegram-question.sh"
+# Path to the shared Stop hook that catches "Telegram inbound this turn but
+# no reply tool call" slips and auto-relays the assistant's transcript text.
+STOP_TELEGRAM_REPLY_HOOK="/usr/local/lib/5dive/stop-telegram-reply-check.sh"
 AGENT_SKILLS_DIR="/usr/local/lib/5dive/skills"
 
 # Preseed a claude-family agent's home dir so:
@@ -599,10 +602,16 @@ JSON
       || warn "$STOP_FAILURE_HOOK missing — StopFailure hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash)"
     [[ -x "$PRETOOL_TELEGRAM_HOOK" ]] \
       || warn "$PRETOOL_TELEGRAM_HOOK missing — PreToolUse hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash)"
-    settings=$(jq --arg hook "$STOP_FAILURE_HOOK" --arg pretool "$PRETOOL_TELEGRAM_HOOK" '
+    [[ -x "$STOP_TELEGRAM_REPLY_HOOK" ]] \
+      || warn "$STOP_TELEGRAM_REPLY_HOOK missing — Stop hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash)"
+    settings=$(jq \
+      --arg hook "$STOP_FAILURE_HOOK" \
+      --arg pretool "$PRETOOL_TELEGRAM_HOOK" \
+      --arg stopreply "$STOP_TELEGRAM_REPLY_HOOK" '
       . + {
         enabledPlugins: {"telegram@claude-plugins-official": true},
         hooks: {
+          Stop: [{hooks: [{type: "command", command: $stopreply, timeout: 10}]}],
           StopFailure: [{hooks: [{type: "command", command: $hook, timeout: 10}]}],
           PreToolUse: [{matcher: "AskUserQuestion|ExitPlanMode", hooks: [{type: "command", command: $pretool, timeout: 5}]}]
         }
