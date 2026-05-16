@@ -270,7 +270,7 @@ cmd_doctor() {
   # --- shelld reachability (managed platform only) ---
   if (( run_shelld )); then
     if [[ ! -f /etc/5dive/provisioning.env ]]; then
-      doctor_add shelld service ok "not a managed VM — shelld not applicable"
+      doctor_add shelld service ok "self-hosted install — shelld only runs on the managed platform"
     else
       local shelld_active
       shelld_active=$(systemctl is-active shelld 2>/dev/null || true)

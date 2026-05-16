@@ -16,16 +16,6 @@ Resume prompt: `continue OSS launch tasks from 5dive-cli/OSS_LAUNCH_TASKS.md —
 
 ---
 
-## P1 — CLI hygiene (small, high-signal for OSS)
-
-### 15. Strip / reword managed-platform refs
-- `cmd_agent.sh:1586` — `FIVE_DOMAIN` comment mentions `warm-hawk.5dive.com`;
-  reword to a generic placeholder.
-- `cmd_doctor.sh:270` — `shelld` check already short-circuits for non-managed;
-  confirm the message text reads cleanly for OSS users.
-
----
-
 ## P2 — UI quality polish (subset of UI_TASKS.md that gates a credible launch)
 
 These reference `ui/UI_TASKS.md` — do not duplicate; mark them done there too.

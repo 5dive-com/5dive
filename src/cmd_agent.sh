@@ -1583,9 +1583,9 @@ send_welcome_message() {
     model="default"; effort="default"
   fi
 
-  # FIVE_DOMAIN is the host's public subdomain (e.g. warm-hawk.5dive.com),
+  # FIVE_DOMAIN is the host's public subdomain (e.g. agent.example.com),
   # set during provisioning. Folded into the message only when present so
-  # older boxes / dev VMs don't surface a half-rendered URL.
+  # self-hosted boxes / dev VMs don't surface a half-rendered URL.
   local domain=""
   if [[ -r /etc/5dive/provisioning.env ]]; then
     domain=$(sed -n 's/^FIVE_DOMAIN=//p' /etc/5dive/provisioning.env 2>/dev/null | head -1)
