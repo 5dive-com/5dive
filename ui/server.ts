@@ -58,6 +58,24 @@ async function runCLIStream(args: string[], onLine: (line: string) => void): Pro
   });
 }
 
+// Reject cross-origin requests. The UI talks to its own server (same-origin
+// in production, Vite proxies in dev), so any browser request carrying an
+// Origin that doesn't match Host is either CSRF or misconfigured — refuse
+// both. Non-browser callers (curl, server-side fetch) typically omit Origin
+// and pass through. There is intentionally no Access-Control-Allow-Origin
+// header: the API is not cross-origin-callable.
+function originAllowed(req: Request): boolean {
+  const origin = req.headers.get("origin");
+  if (!origin) return true; // non-browser / same-origin without explicit header
+  const host = req.headers.get("host");
+  if (!host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
 const server = Bun.serve({
   port: PORT,
   hostname: HOST,
@@ -65,13 +83,17 @@ const server = Bun.serve({
     const url = new URL(req.url);
     const path = url.pathname;
 
-    // CORS for local dev
-    const headers = {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    };
+    const headers = { "Content-Type": "application/json" };
+
+    if (!originAllowed(req)) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "cross-origin request refused" }),
+        { status: 403, headers },
+      );
+    }
+
+    // OPTIONS handler kept for the rare case a same-origin client preflights;
+    // no CORS headers needed since we only ever respond to same-origin.
     if (req.method === "OPTIONS") return new Response(null, { headers });
 
     // GET /api/agents
@@ -296,7 +318,6 @@ const server = Bun.serve({
           headers: {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
-            "Access-Control-Allow-Origin": "*",
           },
         });
       }

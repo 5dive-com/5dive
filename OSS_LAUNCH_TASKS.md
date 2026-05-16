@@ -14,11 +14,6 @@ Resume prompt: `continue OSS launch tasks from 5dive-cli/OSS_LAUNCH_TASKS.md —
 > Item numbers are stable — completed items are removed but the surviving
 > items keep their original IDs so they're easy to refer to in chat / commits.
 
-### 2. UI server: drop CORS wildcard, add Origin allow-list
-Replace `Access-Control-Allow-Origin: *` with an allow-list that includes only
-the current `Host` header. Reject any request whose `Origin` header is set and
-mismatches `Host`. Belt-and-braces against drive-by CSRF from a malicious tab.
-
 ### 3. UI auth: config file + argon2id password
 - Config path: `~/.config/5dive/ui.json` (per-user, mode 600).
 - Schema:
