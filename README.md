@@ -91,8 +91,8 @@ Or wire it to a Telegram bot so you can message it from your phone — [BotFathe
 | `claude` | Anthropic Claude | OAuth / API key |
 | `codex` | OpenAI Codex | OAuth / API key |
 | `gemini` | Google Gemini | OAuth / API key |
-| `hermes` | Nous Hermes | OpenAI OAuth / API key |
-| `openclaw` | OpenClaw | OpenAI OAuth / API key |
+| `hermes` | Nous Hermes | OAuth / API key |
+| `openclaw` | OpenClaw | OAuth / API key |
 | `opencode` | OpenCode | API key |
 
 ---
