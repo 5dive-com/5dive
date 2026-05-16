@@ -76,8 +76,15 @@ Every agent can call `5dive agent send` and `5dive agent ask` on any other agent
 
 ```sh
 # from inside one agent's own session, talking to another:
-5dive agent send  reviewer "review this diff before I push"
-5dive agent ask   researcher "find the canonical postgres tuning guide" --timeout=300
+
+# fire-and-forget — drafter chews on a long writing task while you stay heads-down
+5dive agent send drafter \
+  "skim the customer-interview notes in ~/research/ and write the top 5 themes to ~/research/themes.md"
+
+# synchronous — pull a focused status check from a sub-agent before continuing
+5dive agent ask deployer \
+  "is staging healthy? rollout state, smoke tests, top errors — 5 bullets, no preamble" \
+  --timeout=300
 ```
 
 No coordinator service, no orchestration layer, no API. The CLI itself is the bus. Spawn a senior agent and a junior, give them different prompts, let them pass work. Have one agent delegate research while another holds the user-facing thread.
