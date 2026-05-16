@@ -107,10 +107,23 @@ server logs a loud warning every 60s while it runs. **This is only ever the
 right answer if** (a) you're on a trusted LAN and (b) you understand that
 anyone on that LAN can spawn agents that execute shell commands on your host.
 
-### Roadmap
+### OIDC / SSO
 
-OIDC / SSO (Authelia, Authentik, etc.) is on the day-2 list. The current
-single-password model is intentionally simple for v1.
+The built-in auth is single-password by design — small, auditable, no IdP to
+run. For OIDC / SSO, terminate auth at the reverse proxy and let it forward
+an authenticated identity to the dashboard:
+
+- **[Authelia](https://www.authelia.com/)** — forward-auth via Caddy/Nginx,
+  supports OIDC, LDAP, 2FA.
+- **[Authentik](https://goauthentik.io/)** — full IdP, forward-auth or
+  reverse-proxy outpost.
+- **[oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/)** — thin
+  OIDC/OAuth shim, pairs well with Caddy `forward_auth` or Nginx
+  `auth_request`.
+
+Run `5dive ui` bound to `127.0.0.1` (the default), put your chosen proxy in
+front, and either disable the dashboard password (`auth.mode = none` in
+`~/.config/5dive/ui.json`) or leave it as a second factor.
 
 ## Architecture
 
