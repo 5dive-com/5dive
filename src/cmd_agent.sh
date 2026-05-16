@@ -963,17 +963,32 @@ cmd_types() {
 # below the upstream exec timeout so the HTTP layer doesn't kill the call
 # mid-poll. Pure curl + jq — no extra deps.
 cmd_telegram_discover() {
-  local token="" poll_secs=50
+  local token="" agent="" poll_secs=50
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --token=*)      token="${1#--token=}" ;;
+      --agent=*)      agent="${1#--agent=}" ;;
       --poll-secs=*)  poll_secs="${1#--poll-secs=}" ;;
       -*)             fail "$E_USAGE" "unknown flag: $1" ;;
       *)              fail "$E_USAGE" "extra arg: $1" ;;
     esac
     shift
   done
-  [[ -n "$token" ]] || fail "$E_USAGE" "usage: 5dive agent telegram-discover --token=<bot-token> [--poll-secs=N]"
+  # --agent=<name>: lookup the bot token from the agent's telegram connector
+  # env file. Lets the dashboard discover-for-this-agent without having to
+  # round-trip the token through the browser.
+  if [[ -n "$agent" ]]; then
+    [[ -z "$token" ]] \
+      || fail "$E_USAGE" "--agent and --token are mutually exclusive"
+    local env_file="${CONNECTORS_DIR}/telegram-${agent}.env"
+    [[ -r "$env_file" ]] \
+      || fail "$E_NOT_FOUND" "no telegram connector for agent '$agent' (looked at $env_file)"
+    token=$(grep -E '^TELEGRAM_BOT_TOKEN=' "$env_file" 2>/dev/null \
+            | head -1 | cut -d= -f2-)
+    [[ -n "$token" ]] \
+      || fail "$E_NOT_FOUND" "no TELEGRAM_BOT_TOKEN in $env_file"
+  fi
+  [[ -n "$token" ]] || fail "$E_USAGE" "usage: 5dive agent telegram-discover {--token=<bot-token>|--agent=<name>} [--poll-secs=N]"
   valid_telegram_token "$token" \
     || fail "$E_VALIDATION" "telegram token format looks wrong (expected <digits>:<20+ chars>)"
   [[ "$poll_secs" =~ ^[0-9]+$ ]] && (( poll_secs >= 1 && poll_secs <= 90 )) \

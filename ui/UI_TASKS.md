@@ -140,7 +140,7 @@ When `5dive doctor` reports a type binary is missing, let user fix it in one cli
 
 ---
 
-## T12 · Telegram access management  ✅ TODO
+## T12 · Telegram access management  ✅ DONE
 `telegram-access get/set` + `telegram-discover` flow for pairing.
 
 **Changes (extends T05 Pair tab):**

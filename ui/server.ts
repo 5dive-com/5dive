@@ -401,6 +401,19 @@ const server = Bun.serve({
         return Response.json(result, { headers });
       }
 
+      // POST /api/agents/:name/telegram-discover
+      // Long-polls Telegram getUpdates for this agent's bot. Returns
+      // {found:true, userId, ...} when a user DMs the bot, or {found:false}
+      // on timeout. Client re-polls until found, then adds the userId to
+      // allowFrom via the existing telegram-access endpoint.
+      if (req.method === "POST" && action === "telegram-discover") {
+        const body = await req.json().catch(() => ({})) as { pollSecs?: number };
+        const args = ["agent", "telegram-discover", `--agent=${name}`];
+        if (body.pollSecs) args.push(`--poll-secs=${body.pollSecs}`);
+        const result = await runCLI(...args);
+        return Response.json(result, { headers });
+      }
+
       // POST /api/agents/:name/telegram-access  (body is the access JSON)
       if (req.method === "POST" && action === "telegram-access") {
         const body = await req.json();

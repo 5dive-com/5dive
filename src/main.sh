@@ -78,11 +78,13 @@ Agents:
                                                      # bare pairing code. --user-id seeds access.json directly
                                                      # (auto-detected via telegram-discover; chat_id defaults
                                                      # to user_id for private DMs).
-  5dive agent telegram-discover --token=<bot-token> [--poll-secs=N]
+  5dive agent telegram-discover {--token=<bot-token>|--agent=<name>} [--poll-secs=N]
                                                      # long-polls Telegram getUpdates (timeout N, max 90s).
-                                                     # On first inbound message returns {found:true, userId,
-                                                     # chatId, username, firstName}; otherwise {found:false} —
-                                                     # callers re-poll until found.
+                                                     # --agent reads the token from the agent's connector env
+                                                     # file (so the dashboard can discover without handling the
+                                                     # token client-side). On first inbound message returns
+                                                     # {found:true, userId, chatId, username, firstName};
+                                                     # otherwise {found:false} — callers re-poll until found.
   5dive agent telegram-getme --token=<bot-token>     # fast getMe lookup; returns {botId, username, firstName}.
   5dive agent telegram-info <name> [--refresh]       # name-based getMe; reads token from /etc/5dive/connectors,
                                                      # caches botUsername in the registry. Used by the dashboard

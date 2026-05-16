@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Button, Spinner, Tabs } from "@heroui/react";
-import { ArrowLeft, Play, Square, RotateCw, Terminal, Send, BarChart2, Settings, Link as LinkIcon } from "lucide-react";
+import { ArrowLeft, Play, Square, RotateCw, Terminal, Send, BarChart2, Settings, Link as LinkIcon, Radar } from "lucide-react";
 import type { Agent } from "../types";
 import { TYPE_ICON, CHANNEL_ICON } from "./icons";
 import { StatusDot } from "./StatusDot";
@@ -507,11 +507,20 @@ interface TelegramAccess {
   groups?: Record<string, unknown>[];
 }
 
+interface DiscoverResult {
+  found: boolean;
+  userId?: number;
+  username?: string;
+  firstName?: string;
+}
+
 function TelegramAccessPanel({ agentName }: { agentName: string }) {
   const [access, setAccess] = useState<TelegramAccess | null>(null);
   const [loading, setLoading] = useState(true);
   const [newUserId, setNewUserId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const discoverAbort = useRef(false);
   const toast = useToast();
 
   const load = async () => {
@@ -564,6 +573,53 @@ function TelegramAccessPanel({ agentName }: { agentName: string }) {
     await saveAccess(updated);
   };
 
+  // Long-poll telegram-discover until a user DMs the bot, then auto-add them
+  // to the allowlist. Each poll blocks server-side for up to 50s; we loop
+  // until found or the user cancels. Bot-conflict errors (e.g. live polling
+  // by the agent's own service) are surfaced immediately — we can't share
+  // getUpdates with a running bot, so the user has to stop the agent first.
+  const startDiscover = async () => {
+    if (discovering) return;
+    setDiscovering(true);
+    discoverAbort.current = false;
+    try {
+      while (!discoverAbort.current) {
+        const res = await fetch(
+          `/api/agents/${encodeURIComponent(agentName)}/telegram-discover`,
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+        );
+        const j = await res.json() as { ok: boolean; data?: DiscoverResult; error?: { message?: string } | string };
+        if (!j.ok) {
+          const msg = typeof j.error === "string" ? j.error : j.error?.message ?? "discover failed";
+          toast("error", msg);
+          break;
+        }
+        if (j.data?.found && j.data.userId) {
+          const id = j.data.userId;
+          if ((access?.allowFrom ?? []).includes(id)) {
+            toast("info", `${j.data.username ? "@" + j.data.username : j.data.firstName ?? id} is already in the allowlist`);
+          } else {
+            const updated: TelegramAccess = {
+              ...(access ?? {}),
+              allowFrom: [...(access?.allowFrom ?? []), id],
+            };
+            await saveAccess(updated);
+            toast("success", `Added ${j.data.username ? "@" + j.data.username : j.data.firstName ?? id} (${id})`);
+          }
+          break;
+        }
+        // found:false — re-poll immediately (server's long-poll already waited)
+      }
+    } catch {
+      toast("error", "Auto-discover failed");
+    } finally {
+      setDiscovering(false);
+      discoverAbort.current = false;
+    }
+  };
+
+  const cancelDiscover = () => { discoverAbort.current = true; };
+
   if (loading) return <div className="flex justify-center py-4"><Spinner size="sm" /></div>;
 
   return (
@@ -587,7 +643,29 @@ function TelegramAccessPanel({ agentName }: { agentName: string }) {
 
       {/* Allowed users */}
       <div className="flex flex-col gap-2">
-        <label className="text-[0.8125rem] font-medium text-ink">Allowed user IDs</label>
+        <div className="flex items-center justify-between">
+          <label className="text-[0.8125rem] font-medium text-ink">Allowed user IDs</label>
+          {discovering ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 gap-1 border-border-subtle px-2 text-[0.7rem] text-ink-secondary"
+              onPress={cancelDiscover}
+            >
+              <Spinner size="sm" /> Waiting for /start — Cancel
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 gap-1 border-border-subtle px-2 text-[0.7rem] text-ink-secondary"
+              onPress={() => void startDiscover()}
+              isDisabled={saving}
+            >
+              <Radar className="size-2.5" /> Auto-discover
+            </Button>
+          )}
+        </div>
         {(access?.allowFrom ?? []).length === 0 ? (
           <p className="text-[0.8125rem] text-ink-muted">No users in allowlist.</p>
         ) : (
