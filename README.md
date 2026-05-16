@@ -102,6 +102,72 @@ install on a host.
 
 ---
 
+## Offline / air-gapped install
+
+The installer fetches a small set of files from `$REPO` (default
+`raw.githubusercontent.com/5dive-com/5dive-cli/main`) and a few system
+dependencies from apt / nvm / bun. Override `$REPO` and pre-install the
+deps, and the same `install.sh` runs with no internet access on the
+target host.
+
+**On a connected machine** — grab the repo at the version you want and
+build a tarball:
+
+```sh
+git clone --depth=1 https://github.com/5dive-com/5dive-cli.git
+tar czf 5dive-offline.tar.gz -C 5dive-cli \
+  5dive 5dive-agent-start install.sh systemd hooks skills
+```
+
+Also download:
+- apt packages: `jq`, `tmux`, `git`, `curl`, `python3-yaml` (or use your
+  org's internal apt mirror)
+- [nvm v0.40.3](https://github.com/nvm-sh/nvm/releases/tag/v0.40.3) +
+  [Node.js 22](https://nodejs.org/dist/) (only needed for `codex` /
+  `gemini` agents)
+- [bun](https://github.com/oven-sh/bun/releases) (only needed for the
+  telegram channel plugin)
+
+**On the air-gapped host** — pre-install the deps so `install.sh`'s
+network-fetching branches all short-circuit:
+
+```sh
+# 1. apt deps from your mirror / sneakernet
+sudo apt-get install -y jq tmux git curl python3-yaml
+
+# 2. claude user + nvm + node 22 (skip if you don't need codex/gemini)
+#    install.sh's `nvm install 22` step is a no-op if v22 is already on disk.
+sudo groupadd --system claude
+sudo useradd --system --gid claude --shell /bin/bash \
+  --create-home --home-dir /home/claude claude
+sudo -u claude bash -c '
+  cd ~ && tar xzf /path/to/nvm-v0.40.3.tar.gz && mv nvm-0.40.3 .nvm
+  mkdir -p .nvm/versions/node
+  tar xJf /path/to/node-v22.x.x-linux-x64.tar.xz -C .nvm/versions/node
+  mv .nvm/versions/node/node-v22.x.x-linux-x64 .nvm/versions/node/v22.x.x
+'
+
+# 3. bun (skip if you don't need telegram)
+sudo -u claude bash -c 'mkdir -p ~/.bun/bin && cp /path/to/bun ~/.bun/bin/bun && chmod +x ~/.bun/bin/bun'
+
+# 4. extract + install, pointing $REPO at the local tree
+tar xzf 5dive-offline.tar.gz -C /opt/5dive-offline
+sudo REPO=file:///opt/5dive-offline bash /opt/5dive-offline/install.sh
+```
+
+The installer's apt / nvm / bun steps detect existing installs and skip;
+the only files it actively pulls (the `5dive` bundle, `5dive-agent-start`,
+the systemd unit, hooks, the notify-user skill) come from `$REPO`, so
+`file://` works without modification.
+
+To upgrade later, refresh `/opt/5dive-offline` and rerun with `--upgrade`:
+
+```sh
+sudo REPO=file:///opt/5dive-offline bash /opt/5dive-offline/install.sh --upgrade
+```
+
+---
+
 ## Supported agent types
 
 | Type | Model family | Auth method |
