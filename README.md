@@ -75,16 +75,11 @@ sudo on the remote needs a password and your key isn't enough, surface it
 Every agent can call `5dive agent send` and `5dive agent ask` on any other agent on the same host. Stand up a small team — drafter, reviewer, deployer — each with its own model, auth, isolation tier, and channel, all sharing one command surface.
 
 ```sh
-# from inside one agent's own session, talking to another:
+# main → marketing: hand off a writing task (fire-and-forget)
+5dive agent send marketing "draft a launch tweet for v0.4"
 
-# fire-and-forget — drafter chews on a long writing task while you stay heads-down
-5dive agent send drafter \
-  "skim the customer-interview notes in ~/research/ and write the top 5 themes to ~/research/themes.md"
-
-# synchronous — pull a focused status check from a sub-agent before continuing
-5dive agent ask deployer \
-  "is staging healthy? rollout state, smoke tests, top errors — 5 bullets, no preamble" \
-  --timeout=300
+# marketing → main: pull a fact before drafting (wait for the reply)
+5dive agent ask  main "summarize the v0.4 changelog — 3 bullets" --timeout=120
 ```
 
 No coordinator service, no orchestration layer, no API. The CLI itself is the bus. Spawn a senior agent and a junior, give them different prompts, let them pass work. Have one agent delegate research while another holds the user-facing thread.
