@@ -24,9 +24,28 @@ import { randomBytes } from "crypto";
 const config = loadConfig();
 const PORT = parseInt(process.env.PORT || String(config.bind.port));
 const HOST = process.env.HOST || config.bind.host;
+const INSECURE = process.env.INSECURE === "1" || process.env.INSECURE === "true";
 const CLI = process.env.FIVE_CLI ?? "5dive";
 const DIST = join(import.meta.dir, "dist");
 const SERVE_STATIC = existsSync(DIST);
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"]);
+const isLoopback = LOOPBACK_HOSTS.has(HOST);
+
+// Refuse to bind a public address without auth, unless explicitly told to.
+// The protection is symmetric: setting up auth is one command, and --insecure
+// is a clear opt-in for trusted-LAN power users.
+if (!isLoopback && config.auth.mode !== "password" && !INSECURE) {
+  console.error(`✗ 5dive UI refuses to bind ${HOST} without auth.`);
+  console.error(``);
+  console.error(`  This API can spawn agents that execute shell commands —`);
+  console.error(`  exposing it without auth would hand any LAN client a root shell.`);
+  console.error(``);
+  console.error(`  Set up auth:    5dive ui setup`);
+  console.error(`  Bind loopback:  5dive ui   (default — 127.0.0.1)`);
+  console.error(`  Override:       5dive ui --host=${HOST} --insecure   (you've been warned)`);
+  process.exit(1);
+}
 
 async function runCLI(...args: string[]): Promise<{ ok: boolean; data?: unknown; error?: string }> {
   return new Promise((resolve) => {
@@ -439,9 +458,14 @@ const server = Bun.serve({
 // Display "localhost" for the loopback bind so the printed URL is clickable in
 // every terminal; print the actual host otherwise so users know what they
 // exposed.
-const displayHost = HOST === "127.0.0.1" || HOST === "::1" ? "localhost" : HOST;
+const displayHost = isLoopback ? "localhost" : HOST;
 console.log(`5dive UI at http://${displayHost}:${PORT}${SERVE_STATIC ? "" : " (API only — run `bun run build` for full UI)"}`);
-if (HOST !== "127.0.0.1" && HOST !== "::1") {
-  console.warn(`⚠  bound to ${HOST} — UI has no auth yet, anyone with network access can spawn agents on this host.`);
-  console.warn(`   set up auth: 5dive ui setup     (or bind loopback: HOST=127.0.0.1 ${process.argv[1]})`);
+if (!isLoopback) {
+  if (config.auth.mode === "password") {
+    console.log(`  bound to ${HOST} — password auth enabled.`);
+  } else if (INSECURE) {
+    const warn = () => console.warn(`⚠  bound to ${HOST} with --insecure and no auth — anyone with network access can spawn agents on this host. Run \`5dive ui setup\` and restart to enable auth.`);
+    warn();
+    setInterval(warn, 60_000).unref();
+  }
 }

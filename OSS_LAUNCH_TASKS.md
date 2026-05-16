@@ -14,11 +14,6 @@ Resume prompt: `continue OSS launch tasks from 5dive-cli/OSS_LAUNCH_TASKS.md —
 > Item numbers are stable — completed items are removed but the surviving
 > items keep their original IDs so they're easy to refer to in chat / commits.
 
-### 5. UI auth: refuse public bind without auth
-On startup, if `bind.host != 127.0.0.1` and `auth.mode != password`, refuse to
-start with an error pointing to `5dive ui setup`. Exception: `--insecure` flag
-for trusted-LAN power users (logs a loud warning every 60s).
-
 ### 6. UI onboarding: first-run setup + login screens
 - If `auth.mode=password` and no `passwordHash` set → SPA shows full-screen
   "Set admin password" form. POST `/api/setup` writes config, issues cookie.
