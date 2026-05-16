@@ -5,7 +5,7 @@ Tasks are ordered by impact. Work through them sequentially.
 
 ---
 
-## T01 · App shell — sidebar nav + layout  ✅ TODO
+## T01 · App shell — sidebar nav + layout  ✅ DONE
 The current single-column layout with a sticky header is very basic.
 Flagship uses a collapsible left sidebar with nav items, dark/light theme toggle,
 and a content area.
@@ -19,7 +19,7 @@ and a content area.
 
 ---
 
-## T02 · Toast notification system  ✅ TODO
+## T02 · Toast notification system  ✅ DONE
 Currently zero feedback after actions (create, start, stop, delete). The flagship uses
 toasts for all mutations.
 
@@ -45,7 +45,7 @@ Current cards don't match flagship agent rows.
 
 ---
 
-## T04 · Skeleton loaders  ✅ TODO
+## T04 · Skeleton loaders  ✅ DONE
 Blank flash while agents load looks broken.
 
 **Changes:**
@@ -78,7 +78,7 @@ Current wizard is step 1 (config) + step 2 (auth). Several important options are
 
 ---
 
-## T07 · Clone agent  ✅ TODO
+## T07 · Clone agent  ✅ DONE
 Not exposed at all. Simple modal: source name (read-only pre-filled from context), new name, optional channel override.
 
 **Changes:**
@@ -88,7 +88,7 @@ Not exposed at all. Simple modal: source name (read-only pre-filled from context
 
 ---
 
-## T08 · Ask / sync send  ✅ TODO
+## T08 · Ask / sync send  ✅ DONE
 `agent ask` is "send + wait for reply" — a powerful capability not in the UI.
 
 **Changes:**
@@ -98,7 +98,7 @@ Not exposed at all. Simple modal: source name (read-only pre-filled from context
 
 ---
 
-## T09 · Accounts page  ✅ TODO
+## T09 · Accounts page  ✅ DONE
 Account management (`5dive account *`) is entirely missing.
 
 **New page:** `/accounts` in sidebar nav
@@ -116,7 +116,7 @@ Account management (`5dive account *`) is entirely missing.
 
 ---
 
-## T10 · Health / Doctor page  ✅ TODO
+## T10 · Health / Doctor page  ✅ DONE
 `5dive doctor` checks deps, type bins, auth probes, registry — entirely missing from UI.
 
 **New page:** `/health` in sidebar nav

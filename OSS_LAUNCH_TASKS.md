@@ -20,13 +20,8 @@ Resume prompt: `continue OSS launch tasks from 5dive-cli/OSS_LAUNCH_TASKS.md —
 
 These reference `ui/UI_TASKS.md` — do not duplicate; mark them done there too.
 
-### 16. UI_TASKS T01 — sidebar nav + layout
-### 17. UI_TASKS T02 — toast notification system
-### 18. UI_TASKS T04 — skeleton loaders
 ### 19. UI_TASKS T05 — agent detail full tab set (Config / Pair / Send / Logs)
-### 20. UI_TASKS T07 — clone agent
-### 21. UI_TASKS T09 — accounts page
-### 22. `5dive ui` UX polish: auto-open browser, detect missing `bun` with a clear error pointing to install.sh.
+Logs / Send / Stats / Config tabs landed; remaining gap is a dedicated **Pair** tab (visible when channels=telegram/discord) plus a **Follow** toggle on the Logs tab. Telegram access lives inside Config today — split it out into the Pair tab.
 
 ---
 
@@ -35,8 +30,7 @@ These reference `ui/UI_TASKS.md` — do not duplicate; mark them done there too.
 ### 23. Docker `docker run` one-liner for tire-kickers who don't want root install
 ### 24. `--user` mode (tmux-managed, no systemd)
 ### 25. Offline / air-gapped install (release tarball + manual steps)
-### 26. UI_TASKS T10 + T11 — health page + install missing type binaries
-### 27. UI_TASKS T08 — ask / sync send
-### 28. UI_TASKS T12 — telegram access management
-### 29. UI_TASKS T13 — mobile responsive layout
+### 26b. UI_TASKS T11 — "Install" button in Health for missing type binaries (T10 health page itself is done)
+### 28b. UI_TASKS T12 — telegram auto-discover button (access-list management is done in Config tab)
+### 29b. UI_TASKS T13 — mobile polish: confirm modal full-screen + card stacking at narrow widths (sidebar+bottom-tab shell already done)
 ### 30. OIDC / SSO adapter (Authelia / Authentik compatible)
