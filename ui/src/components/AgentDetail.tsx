@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Button, Spinner, Tabs } from "@heroui/react";
-import { ArrowLeft, Play, Square, RotateCw, Terminal, Send, BarChart2, Settings } from "lucide-react";
+import { ArrowLeft, Play, Square, RotateCw, Terminal, Send, BarChart2, Settings, Link as LinkIcon } from "lucide-react";
 import type { Agent } from "../types";
 import { TYPE_ICON, CHANNEL_ICON } from "./icons";
 import { StatusDot } from "./StatusDot";
@@ -79,6 +79,7 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
   const [activeTab, setActiveTab] = useState("logs");
   const [logs, setLogs] = useState<string[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
+  const [logsFollow, setLogsFollow] = useState(false);
   const [stats, setStats] = useState<Record<string, string> | null>(null);
   const [message, setMessage] = useState("");
   const [sendMode, setSendMode] = useState<"send" | "ask">("send");
@@ -94,15 +95,23 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
     if (activeTab !== "logs") return;
     setLogs([]);
     setLogsLoading(true);
-    const es = new EventSource(`/api/agents/${encodeURIComponent(agent.name)}/logs?lines=300`);
+    const qs = `lines=300${logsFollow ? "&follow=1" : ""}`;
+    const es = new EventSource(`/api/agents/${encodeURIComponent(agent.name)}/logs?${qs}`);
     es.onmessage = (e) => {
-      if (e.data === "[EOF]") { setLogsLoading(false); es.close(); return; }
+      // [EOF] in follow mode means the CLI exited (agent stopped) — surface
+      // it as a status line rather than silently closing.
+      if (e.data === "[EOF]") {
+        setLogsLoading(false);
+        if (logsFollow) setLogs((prev) => [...prev, "[stream ended]"]);
+        es.close();
+        return;
+      }
       const line = JSON.parse(e.data) as string;
       setLogs((prev) => [...prev, line]);
     };
     es.onerror = () => { setLogsLoading(false); es.close(); };
     return () => es.close();
-  }, [agent.name, activeTab]);
+  }, [agent.name, activeTab, logsFollow]);
 
   useEffect(() => {
     if (logsEndRef.current) {
@@ -165,6 +174,7 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
 
   const isActive = agent.status === "active";
   const CIcon = agent.channels ? CHANNEL_ICON[agent.channels] : null;
+  const hasPairing = agent.channels === "telegram" || agent.channels === "discord";
 
   return (
     <div className="flex flex-col gap-5">
@@ -231,6 +241,11 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
             <Tabs.Tab id="send">
               <span className="flex items-center gap-1.5"><Send className="size-3.5" /> Send</span>
             </Tabs.Tab>
+            {hasPairing && (
+              <Tabs.Tab id="pair">
+                <span className="flex items-center gap-1.5"><LinkIcon className="size-3.5" /> Pair</span>
+              </Tabs.Tab>
+            )}
             <Tabs.Tab id="stats">
               <span className="flex items-center gap-1.5"><BarChart2 className="size-3.5" /> Stats</span>
             </Tabs.Tab>
@@ -242,12 +257,32 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
 
         {/* Logs */}
         <Tabs.Panel id="logs">
-          <div className="terminal-block mt-3 h-96">
+          <div className="mt-3 flex items-center justify-between">
+            <span className="text-[0.75rem] text-ink-muted">
+              {logsFollow ? "Streaming live — new lines appear as the agent emits them." : "Showing the last 300 lines."}
+            </span>
+            <label className="flex cursor-pointer items-center gap-2 text-[0.8125rem] text-ink-secondary">
+              <input
+                type="checkbox"
+                checked={logsFollow}
+                onChange={(e) => setLogsFollow(e.target.checked)}
+                className="size-3.5 accent-signal"
+              />
+              Follow
+            </label>
+          </div>
+          <div className="terminal-block mt-2 h-96">
             <div className="terminal-header">
               <div className="terminal-dot" />
               <div className="terminal-dot" />
               <div className="terminal-dot" />
               <span className="ml-2 text-[0.75rem] text-zinc-500">{agent.name}</span>
+              {logsFollow && (
+                <span className="ml-auto flex items-center gap-1.5 text-[0.6875rem] text-green-400">
+                  <span className="size-1.5 rounded-full bg-green-400 animate-pulse" />
+                  live
+                </span>
+              )}
             </div>
             <div className="terminal-body h-[calc(100%-2.625rem)] overflow-y-auto">
               {logsLoading && logs.length === 0 ? (
@@ -387,14 +422,34 @@ export function AgentDetail({ agent, onBack, onRefresh }: Props) {
                 placeholder="default"
               />
             </div>
-
-            {agent.channels === "telegram" && (
-              <div className="border-t border-border-subtle pt-4">
-                <TelegramAccessPanel agentName={agent.name} />
-              </div>
-            )}
           </div>
         </Tabs.Panel>
+
+        {/* Pair (telegram / discord only) */}
+        {hasPairing && (
+          <Tabs.Panel id="pair">
+            <div className="mt-3 flex flex-col gap-4 rounded-xl border border-border-subtle bg-surface-card p-5">
+              <div className="flex items-center gap-2">
+                {CIcon && <CIcon className="size-4 text-ink-secondary" />}
+                <h3 className="text-[0.9375rem] font-semibold text-ink">
+                  {agent.channels === "telegram" ? "Telegram" : "Discord"} pairing
+                </h3>
+              </div>
+              <p className="text-[0.8125rem] text-ink-secondary">
+                Control who can DM this agent. Add Telegram user IDs to the allowlist, or open
+                DMs to anyone with the allowlist policy.
+              </p>
+              {agent.channels === "telegram" ? (
+                <TelegramAccessPanel agentName={agent.name} />
+              ) : (
+                <p className="text-[0.8125rem] text-ink-muted">
+                  Discord access controls are managed via the bot's server permissions —
+                  invite the bot to a server and configure roles there.
+                </p>
+              )}
+            </div>
+          </Tabs.Panel>
+        )}
       </Tabs>
     </div>
   );

@@ -55,7 +55,7 @@ Blank flash while agents load looks broken.
 
 ---
 
-## T05 · Agent detail — full tab set  ✅ TODO
+## T05 · Agent detail — full tab set  ✅ DONE
 Current AgentDetail only has Logs + Stats tabs. Need Config and (for Telegram agents) Pair tab.
 
 **Changes (new tabs):**

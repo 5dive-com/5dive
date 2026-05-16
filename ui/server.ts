@@ -65,27 +65,28 @@ async function runCLI(...args: string[]): Promise<{ ok: boolean; data?: unknown;
   });
 }
 
-async function runCLIStream(args: string[], onLine: (line: string) => void): Promise<void> {
-  return new Promise((resolve) => {
-    const proc = spawn(CLI, args, { stdio: ["ignore", "pipe", "pipe"] });
-    let buf = "";
-    proc.stdout.on("data", (d: Buffer) => {
-      buf += d.toString();
-      const lines = buf.split("\n");
-      buf = lines.pop() ?? "";
-      lines.forEach(onLine);
-    });
-    proc.stderr.on("data", (d: Buffer) => {
-      buf += d.toString();
-      const lines = buf.split("\n");
-      buf = lines.pop() ?? "";
-      lines.forEach(onLine);
-    });
+function runCLIStream(args: string[], onLine: (line: string) => void): { done: Promise<void>; abort: () => void } {
+  const proc = spawn(CLI, args, { stdio: ["ignore", "pipe", "pipe"] });
+  let buf = "";
+  proc.stdout.on("data", (d: Buffer) => {
+    buf += d.toString();
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    lines.forEach(onLine);
+  });
+  proc.stderr.on("data", (d: Buffer) => {
+    buf += d.toString();
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    lines.forEach(onLine);
+  });
+  const done = new Promise<void>((resolve) => {
     proc.on("close", () => {
       if (buf) onLine(buf);
       resolve();
     });
   });
+  return { done, abort: () => { try { proc.kill("SIGTERM"); } catch { /* already dead */ } } };
 }
 
 // Reject cross-origin requests. The UI talks to its own server (same-origin
@@ -421,17 +422,32 @@ const server = Bun.serve({
         return Response.json(result, { headers });
       }
 
-      // GET /api/agents/:name/logs  (SSE stream)
+      // GET /api/agents/:name/logs?lines=N&follow=1  (SSE stream)
+      // follow=1 keeps the spawned `5dive agent logs --follow` running until
+      // the client disconnects; cancel() kills the child so we don't leak
+      // tail processes when a tab closes.
       if (req.method === "GET" && action === "logs") {
         const lines = parseInt(url.searchParams.get("lines") ?? "100");
+        const follow = url.searchParams.get("follow") === "1";
         const encoder = new TextEncoder();
+        const cliArgs = ["agent", "logs", name, `--lines=${lines}`];
+        if (follow) cliArgs.push("--follow");
+        let handle: { done: Promise<void>; abort: () => void } | null = null;
         const stream = new ReadableStream({
           async start(controller) {
-            await runCLIStream(["agent", "logs", name, `--lines=${lines}`], (line) => {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(line)}\n\n`));
+            handle = runCLIStream(cliArgs, (line) => {
+              try {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(line)}\n\n`));
+              } catch { /* stream closed by client */ }
             });
-            controller.enqueue(encoder.encode("data: [EOF]\n\n"));
-            controller.close();
+            await handle.done;
+            try {
+              controller.enqueue(encoder.encode("data: [EOF]\n\n"));
+              controller.close();
+            } catch { /* already closed */ }
+          },
+          cancel() {
+            handle?.abort();
           },
         });
         return new Response(stream, {
