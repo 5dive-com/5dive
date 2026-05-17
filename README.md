@@ -292,6 +292,31 @@ Control what each agent can access on the host:
 
 ---
 
+## Context rot
+
+LLM agents degrade over long sessions — accumulated context, attention drift, slower replies, weirder mistakes. Chat tools dodge this with a "new chat" button. A persistent agent can't. 5dive's pattern has three knobs:
+
+**Daily restart via cron.** One line in root's crontab gives you fresh CLI binaries and fresh sessions at the same time:
+
+```cron
+0 4 * * * curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | bash -s -- --upgrade && systemctl restart '5dive-agent@*.service'
+```
+
+`install.sh --upgrade` refreshes the CLI binaries and the systemd unit without touching state, auth, or registry. The follow-up `systemctl restart` cycles each agent's tmux session — old context out, new model session in.
+
+**On-demand restart from a channel.** When you're switching the agent to a new unrelated task, just ask it over Telegram / Discord:
+
+> you: *"switch gears — restart your session before the next task."*
+> agent: *[runs `5dive agent restart <self>` and comes back fresh]*
+
+The agent already knows the command — it's in the `5dive-cli` skill. No need to SSH in.
+
+**Memory survives the restart.** Claude-runtime agents have project memory on by default — facts learned about you, project context, and feedback live under `~/.claude/projects/<dir>/memory/`. The working session resets; the memory stays. That's what makes restarts cheap: you get a fresh model session without losing what the agent already knows. (Codex and Gemini agents use their own equivalents — same principle, different file.)
+
+The net: agents you can leave running indefinitely without watching them get worse.
+
+---
+
 ## Skills
 
 Skills are `SKILL.md` prompt bundles that drop into any agent. Install one or more at create time:
