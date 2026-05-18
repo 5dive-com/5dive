@@ -7,11 +7,49 @@
 
 spawn and manage AI agents that talk to each other.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash
+> MIT. The same binary that runs every agent on [5dive.com](https://5dive.com) — no open-core split. Skip the ops with the managed VM, or run your own.
+
+---
+
+## How it works
+
+Each agent is its own Linux user running an official AI CLI (`claude`, `codex`, `gemini`, ...) as a systemd service. They reach each other by invoking the same `5dive` CLI — that *is* the bus. Channels like Telegram attach per agent.
+
+```text
+            one host
+ ┌──────────────────────────────────┐
+ │  coder      writer       pm      │
+ │ (claude)   (gemini)    (codex)   │
+ │    │          │           │      │
+ │    └────  5dive CLI  ─────┘      │
+ │       send · ask · logs          │
+ └──────────────────────────────────┘
+        ↕ Telegram / Discord
+        (attach per agent)
 ```
 
-> MIT. The same binary that runs every agent on [5dive.com](https://5dive.com) — no open-core split. Skip the ops with the managed VM, or run your own.
+No broker, no protocol, no orchestrator. Shared filesystem, shared CLI.
+
+---
+
+## Quickstart
+
+```sh
+# 1. install
+curl -fsSL https://install.5dive.com | sudo bash
+
+# 2. sign in + create your first agent
+5dive init
+```
+
+Want it on your phone? Wire any agent to a Telegram bot ([BotFather](https://t.me/BotFather) gives you the token):
+
+```sh
+5dive agent create my-agent --type=claude --channels=telegram --telegram-token=<token>
+5dive agent pair   my-agent --code=<pairing-code>
+```
+
+For scripted / CI setup, see `5dive init --help`.
 
 ---
 
@@ -24,36 +62,6 @@ curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | s
 **Every major AI CLI.** `claude`, `codex`, `gemini`, `hermes`, `openclaw`, `opencode` — coordinated under one team.
 
 **A subscription that's yours.** Official `claude` CLI on your own Pro/Max — no middleman, no OAuth proxy, Anthropic-policy safe.
-
----
-
-## Quickstart
-
-```sh
-# 1. install
-curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash
-
-# 2. sign in (api key, or interactive device-code OAuth)
-5dive agent auth set   claude --api-key sk-ant-...
-5dive agent auth login claude
-
-# 3. create an agent
-5dive agent create my-agent --type=claude
-
-# 4. talk to it
-5dive agent send my-agent "summarize the logs in /var/log"
-5dive agent ask  my-agent "what's the status of the deploy?" --timeout=60
-
-# 5. attach to the live session
-5dive agent my-agent tui
-```
-
-Wire it to a Telegram bot to message it from your phone — [BotFather](https://t.me/BotFather) gives you the token:
-
-```sh
-5dive agent create my-agent --type=claude --channels=telegram --telegram-token=<token>
-5dive agent pair   my-agent --code=<pairing-code>
-```
 
 ---
 
