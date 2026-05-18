@@ -298,12 +298,14 @@ const server = Bun.serve({
       }
     }
 
-    // POST /api/auth/:type/start  — start OAuth device-code flow
-    // GET  /api/auth/:type/poll/:sessionId  — poll for URL / completion
-    const authFlowMatch = path.match(/^\/api\/auth\/([^/]+)\/(start|poll(?:\/([^/]+))?)$/);
+    // POST /api/auth/:type/start                  — start OAuth device-code flow
+    // GET  /api/auth/:type/poll/:sessionId        — poll for URL / completion
+    // POST /api/auth/:type/submit/:sessionId      — submit pasted callback code (claude/gemini)
+    // POST /api/auth/:type/cancel/:sessionId      — abort a pending session
+    const authFlowMatch = path.match(/^\/api\/auth\/([^/]+)\/(start|poll|submit|cancel)(?:\/([^/]+))?$/);
     if (authFlowMatch) {
       const type = authFlowMatch[1];
-      const action = authFlowMatch[2].startsWith("poll") ? "poll" : "start";
+      const action = authFlowMatch[2];
       const sessionId = authFlowMatch[3];
 
       if (req.method === "POST" && action === "start") {
@@ -312,6 +314,19 @@ const server = Bun.serve({
       }
       if (req.method === "GET" && action === "poll" && sessionId) {
         const result = await runCLI("agent", "auth", "poll", sessionId);
+        return Response.json(result, { headers });
+      }
+      // Callback codes go in the JSON body (gemini's contains '#', so URL-path
+      // would be brittle). CLI validates the shape — refuses spaces/quotes —
+      // so passing through argv is safe; the alternative would be a CLI patch
+      // to accept stdin for --code, which is more surface than we need today.
+      if (req.method === "POST" && action === "submit" && sessionId) {
+        const body = await req.json() as { code: string };
+        const result = await runCLI("agent", "auth", "submit", sessionId, `--code=${body.code}`);
+        return Response.json(result, { headers });
+      }
+      if (req.method === "POST" && action === "cancel" && sessionId) {
+        const result = await runCLI("agent", "auth", "cancel", sessionId);
         return Response.json(result, { headers });
       }
     }
@@ -331,6 +346,7 @@ const server = Bun.serve({
       if (body.isolation) args.push(`--isolation=${body.isolation}`);
       if (body.channels) args.push(`--channels=${body.channels}`);
       if (body.telegramToken) args.push(`--telegram-token=${body.telegramToken}`);
+      if (body.discordToken) args.push(`--discord-token=${body.discordToken}`);
       if (body.workdir) args.push(`--workdir=${body.workdir}`);
       if (body.authProfile) args.push(`--auth-profile=${body.authProfile}`);
       if (body.deferAuth === "true") args.push("--defer-auth");
