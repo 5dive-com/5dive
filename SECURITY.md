@@ -4,7 +4,7 @@
 
 Please report security issues through GitHub's private vulnerability reporting:
 
-**[Report a vulnerability →](https://github.com/5dive-com/5dive-cli/security/advisories/new)**
+**[Report a vulnerability →](https://github.com/5dive-com/5dive/security/advisories/new)**
 
 Do **not** open a public issue, PR, or discussion thread for a suspected
 vulnerability — that exposes other users before a fix is available.
@@ -38,7 +38,7 @@ We may ask follow-up questions in the advisory thread before we can confirm.
 
 ## Supported versions
 
-5dive-cli is pre-1.0 and ships from `main`. Only the latest tagged release
+5dive is pre-1.0 and ships from `main`. Only the latest tagged release
 and current `main` receive security fixes. Once v1.0 is out, this section
 will list the supported version range.
 

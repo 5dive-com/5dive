@@ -603,11 +603,11 @@ JSON
   }')
   if [[ "$channels" == "telegram" ]]; then
     [[ -x "$STOP_FAILURE_HOOK" ]] \
-      || warn "$STOP_FAILURE_HOOK missing — StopFailure hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash)"
+      || warn "$STOP_FAILURE_HOOK missing — StopFailure hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
     [[ -x "$PRETOOL_TELEGRAM_HOOK" ]] \
-      || warn "$PRETOOL_TELEGRAM_HOOK missing — PreToolUse hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash)"
+      || warn "$PRETOOL_TELEGRAM_HOOK missing — PreToolUse hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
     [[ -x "$STOP_TELEGRAM_REPLY_HOOK" ]] \
-      || warn "$STOP_TELEGRAM_REPLY_HOOK missing — Stop hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash)"
+      || warn "$STOP_TELEGRAM_REPLY_HOOK missing — Stop hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
     settings=$(jq \
       --arg hook "$STOP_FAILURE_HOOK" \
       --arg pretool "$PRETOOL_TELEGRAM_HOOK" \
@@ -5466,7 +5466,7 @@ cmd_doctor() {
           doctor_add registry schema warn "schemaVersion=$schema_v (expected $REGISTRY_SCHEMA_VERSION) — run with --repair" true false
         fi
       else
-        doctor_add registry schema error "schemaVersion=$schema_v is newer than this CLI ($REGISTRY_SCHEMA_VERSION) — upgrade 5dive-cli" false false
+        doctor_add registry schema error "schemaVersion=$schema_v is newer than this CLI ($REGISTRY_SCHEMA_VERSION) — upgrade 5dive" false false
       fi
       local reg
       reg=$(registry_read)
@@ -6551,7 +6551,7 @@ main() {
       elif [[ -d /usr/local/lib/5dive/ui ]]; then
         ui_dir="/usr/local/lib/5dive/ui"
       else
-        fail "$E_NOT_FOUND" "5dive UI not found — install it at /usr/local/lib/5dive/ui or run from the 5dive-cli repo directory"
+        fail "$E_NOT_FOUND" "5dive UI not found — install it at /usr/local/lib/5dive/ui or run from the 5dive repo directory"
       fi
 
       # The UI server runs on bun. install.sh provisions it for the `claude`
@@ -6562,7 +6562,7 @@ main() {
         fail "$E_NOT_FOUND" "$(printf '%s\n%s\n  %s\n%s\n  %s' \
           "bun is required for 5dive ui but was not found in PATH." \
           "Install via the 5dive installer (recommended):" \
-          "curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash" \
+          "curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash" \
           "or directly:" \
           "curl -fsSL https://bun.sh/install | bash")"
       fi
@@ -6633,7 +6633,7 @@ main() {
       local installer
       if command -v curl >/dev/null 2>&1; then
         installer=$(mktemp)
-        curl -fsSL "https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh" -o "$installer" \
+        curl -fsSL "https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh" -o "$installer" \
           || fail "$E_GENERIC" "failed to fetch installer"
         chmod +x "$installer"
         exec bash "$installer" --uninstall "$@"

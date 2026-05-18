@@ -1,4 +1,4 @@
-# Contributing to 5dive-cli
+# Contributing to 5dive
 
 Thanks for the interest. This is a solo-maintained project — reviews can be
 slow, and not every idea will land. If you're planning more than a small
@@ -7,7 +7,7 @@ into it.
 
 ## Scope
 
-5dive-cli's core mission is **spawning and managing AI coding agents on a
+5dive's core mission is **spawning and managing AI coding agents on a
 host**. Features that directly serve that (new agent types, better
 isolation, better visibility into running agents, smoother install/upgrade)
 are in scope. Features that drift into adjacent territory — full IdP,
@@ -28,8 +28,8 @@ Requirements:
 Clone and build the CLI bundle:
 
 ```bash
-git clone https://github.com/5dive-com/5dive-cli.git
-cd 5dive-cli
+git clone https://github.com/5dive-com/5dive.git
+cd 5dive
 ./build.sh        # concatenates src/ into the single-file `5dive` bundle
 bash -n 5dive     # syntax-check the bundle
 ```

@@ -1,8 +1,8 @@
 # 5dive CLI
 
-[![install-smoke](https://github.com/5dive-com/5dive-cli/actions/workflows/install-smoke.yml/badge.svg)](https://github.com/5dive-com/5dive-cli/actions/workflows/install-smoke.yml)
-[![bundle-drift](https://github.com/5dive-com/5dive-cli/actions/workflows/bundle-drift.yml/badge.svg)](https://github.com/5dive-com/5dive-cli/actions/workflows/bundle-drift.yml)
-[![Latest release](https://img.shields.io/github/v/release/5dive-com/5dive-cli)](https://github.com/5dive-com/5dive-cli/releases)
+[![install-smoke](https://github.com/5dive-com/5dive/actions/workflows/install-smoke.yml/badge.svg)](https://github.com/5dive-com/5dive/actions/workflows/install-smoke.yml)
+[![bundle-drift](https://github.com/5dive-com/5dive/actions/workflows/bundle-drift.yml/badge.svg)](https://github.com/5dive-com/5dive/actions/workflows/bundle-drift.yml)
+[![Latest release](https://img.shields.io/github/v/release/5dive-com/5dive)](https://github.com/5dive-com/5dive/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Open-source CLI to spawn, manage, and message AI agents — any model, any machine.
@@ -10,7 +10,7 @@ Open-source CLI to spawn, manage, and message AI agents — any model, any machi
 > Prefer managed? [5dive.com](https://5dive.com) runs the same CLI on a hardened VM — point it at the agent, skip the ops.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash
 ```
 
 ### Or have your existing AI agent install it
@@ -20,10 +20,10 @@ If you already use Claude Code / Codex / Gemini / opencode etc., paste one of th
 **On the same machine the agent is running on:**
 
 ```
-Install 5dive-cli on this Linux host so I can use you to manage 5dive agents.
+Install 5dive on this Linux host so I can use you to manage 5dive agents.
 
 1. Run the official installer (idempotent — safe to rerun):
-   curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash
+   curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash
 2. Confirm: `5dive --version` should print "5dive 0.1.x".
 3. Install the 5dive-cli skill so you know how to drive it. Use the
    `--agent` value that matches your runtime — `claude-code`, `codex`,
@@ -42,12 +42,12 @@ and don't retry blindly.
 **From your laptop, installing onto a remote VM over SSH:**
 
 ```
-Install 5dive-cli on the remote VM at <user@host> so I can manage agents on
+Install 5dive on the remote VM at <user@host> so I can manage agents on
 it through you over SSH.
 
 1. Confirm reachability: `ssh <user@host> uname -a`. Stop if that fails.
 2. Run the installer on the remote:
-   ssh -t <user@host> 'curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash'
+   ssh -t <user@host> 'curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash'
 3. Verify: `ssh <user@host> '/usr/local/bin/5dive --version'` should print
    "5dive 0.1.x".
 4. Install the 5dive-cli skill into your own (local) home — that's where
@@ -124,7 +124,7 @@ This is the feature most people don't realize they need until they try it.
 
 **1. Install** (or upgrade an existing install with `bash -s -- --upgrade`)
 ```sh
-curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash
 ```
 
 Rerunning the installer is safe — it won't touch your registry, auth profiles, or agents. `--upgrade` skips apt/nvm/bun entirely and only refreshes the CLI binaries, systemd unit, and hooks.
@@ -183,7 +183,7 @@ install on a host.
 ## Offline / air-gapped install
 
 The installer fetches a small set of files from `$REPO` (default
-`raw.githubusercontent.com/5dive-com/5dive-cli/main`) and a few system
+`raw.githubusercontent.com/5dive-com/5dive/main`) and a few system
 dependencies from apt / nvm / bun. Override `$REPO` and pre-install the
 deps, and the same `install.sh` runs with no internet access on the
 target host.
@@ -192,8 +192,8 @@ target host.
 build a tarball:
 
 ```sh
-git clone --depth=1 https://github.com/5dive-com/5dive-cli.git
-tar czf 5dive-offline.tar.gz -C 5dive-cli \
+git clone --depth=1 https://github.com/5dive-com/5dive.git
+tar czf 5dive-offline.tar.gz -C 5dive \
   5dive 5dive-agent-start install.sh systemd hooks skills
 ```
 
@@ -314,7 +314,7 @@ LLM agents degrade over long sessions — accumulated context, attention drift, 
 **Daily restart via cron.** One line in root's crontab gives you fresh CLI binaries and fresh sessions at the same time:
 
 ```cron
-0 4 * * * curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | bash -s -- --upgrade && systemctl restart '5dive-agent@*.service'
+0 4 * * * curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | bash -s -- --upgrade && systemctl restart '5dive-agent@*.service'
 ```
 
 `install.sh --upgrade` refreshes the CLI binaries and the systemd unit without touching state, auth, or registry. The follow-up `systemctl restart` cycles each agent's tmux session — old context out, new model session in.

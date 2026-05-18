@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something is broken in 5dive-cli
+about: Something is broken in 5dive
 title: ''
 labels: bug
 ---

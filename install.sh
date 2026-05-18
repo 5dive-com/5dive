@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # 5dive CLI installer / uninstaller
-# Install:   curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash
-# Upgrade:   curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash -s -- --upgrade
-# Uninstall: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash -s -- --uninstall
+# Install:   curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash
+# Upgrade:   curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash -s -- --upgrade
+# Uninstall: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash -s -- --uninstall
 set -euo pipefail
 
 # Source for binaries / hooks / skills. Overridable for offline installs,
 # enterprise mirrors, and pre-publish smoke tests (which point this at a
 # `file://` bundle of the working tree).
-REPO="${REPO:-https://raw.githubusercontent.com/5dive-com/5dive-cli/main}"
+REPO="${REPO:-https://raw.githubusercontent.com/5dive-com/5dive/main}"
 BIN_DIR="/usr/local/bin"
 STATE_DIR="/var/lib/5dive"
 CONNECTORS_DIR="/etc/5dive/connectors"
@@ -244,4 +244,4 @@ echo "  5dive doctor --repair                     # auto-install agent type bina
 echo "  5dive agent create my-agent --type=claude # create your first agent"
 echo
 echo "To upgrade later: curl -fsSL $REPO/install.sh | sudo bash -s -- --upgrade"
-echo "Docs: https://github.com/5dive-com/5dive-cli"
+echo "Docs: https://github.com/5dive-com/5dive"

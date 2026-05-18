@@ -6,7 +6,7 @@ labels: enhancement
 ---
 
 <!--
-Read the "Scope" section in CONTRIBUTING.md before filing. 5dive-cli's core
+Read the "Scope" section in CONTRIBUTING.md before filing. 5dive's core
 mission is spawning/managing AI coding agents on a host — features outside
 that usually get a "use upstream tool X" answer.
 -->

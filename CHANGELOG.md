@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `5dive-cli` are recorded here.
+All notable changes to `5dive` are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
@@ -107,6 +107,6 @@ First public release.
 - `bundle-drift` workflow — fails any push where the committed `5dive`
   bundle disagrees with `./build.sh` output from `src/`.
 
-[Unreleased]: https://github.com/5dive-com/5dive-cli/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/5dive-com/5dive-cli/releases/tag/v0.1.1
-[0.1.0]: https://github.com/5dive-com/5dive-cli/releases/tag/v0.1.0
+[Unreleased]: https://github.com/5dive-com/5dive/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/5dive-com/5dive/releases/tag/v0.1.1
+[0.1.0]: https://github.com/5dive-com/5dive/releases/tag/v0.1.0

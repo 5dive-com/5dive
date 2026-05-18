@@ -350,7 +350,7 @@ main() {
       elif [[ -d /usr/local/lib/5dive/ui ]]; then
         ui_dir="/usr/local/lib/5dive/ui"
       else
-        fail "$E_NOT_FOUND" "5dive UI not found — install it at /usr/local/lib/5dive/ui or run from the 5dive-cli repo directory"
+        fail "$E_NOT_FOUND" "5dive UI not found — install it at /usr/local/lib/5dive/ui or run from the 5dive repo directory"
       fi
 
       # The UI server runs on bun. install.sh provisions it for the `claude`
@@ -361,7 +361,7 @@ main() {
         fail "$E_NOT_FOUND" "$(printf '%s\n%s\n  %s\n%s\n  %s' \
           "bun is required for 5dive ui but was not found in PATH." \
           "Install via the 5dive installer (recommended):" \
-          "curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash" \
+          "curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash" \
           "or directly:" \
           "curl -fsSL https://bun.sh/install | bash")"
       fi
@@ -432,7 +432,7 @@ main() {
       local installer
       if command -v curl >/dev/null 2>&1; then
         installer=$(mktemp)
-        curl -fsSL "https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh" -o "$installer" \
+        curl -fsSL "https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh" -o "$installer" \
           || fail "$E_GENERIC" "failed to fetch installer"
         chmod +x "$installer"
         exec bash "$installer" --uninstall "$@"

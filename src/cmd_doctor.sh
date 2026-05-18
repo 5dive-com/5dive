@@ -230,7 +230,7 @@ cmd_doctor() {
           doctor_add registry schema warn "schemaVersion=$schema_v (expected $REGISTRY_SCHEMA_VERSION) — run with --repair" true false
         fi
       else
-        doctor_add registry schema error "schemaVersion=$schema_v is newer than this CLI ($REGISTRY_SCHEMA_VERSION) — upgrade 5dive-cli" false false
+        doctor_add registry schema error "schemaVersion=$schema_v is newer than this CLI ($REGISTRY_SCHEMA_VERSION) — upgrade 5dive" false false
       fi
       local reg
       reg=$(registry_read)

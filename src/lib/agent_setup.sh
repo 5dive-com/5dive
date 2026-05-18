@@ -69,11 +69,11 @@ JSON
   }')
   if [[ "$channels" == "telegram" ]]; then
     [[ -x "$STOP_FAILURE_HOOK" ]] \
-      || warn "$STOP_FAILURE_HOOK missing — StopFailure hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash)"
+      || warn "$STOP_FAILURE_HOOK missing — StopFailure hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
     [[ -x "$PRETOOL_TELEGRAM_HOOK" ]] \
-      || warn "$PRETOOL_TELEGRAM_HOOK missing — PreToolUse hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash)"
+      || warn "$PRETOOL_TELEGRAM_HOOK missing — PreToolUse hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
     [[ -x "$STOP_TELEGRAM_REPLY_HOOK" ]] \
-      || warn "$STOP_TELEGRAM_REPLY_HOOK missing — Stop hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive-cli/main/install.sh | sudo bash)"
+      || warn "$STOP_TELEGRAM_REPLY_HOOK missing — Stop hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
     settings=$(jq \
       --arg hook "$STOP_FAILURE_HOOK" \
       --arg pretool "$PRETOOL_TELEGRAM_HOOK" \
