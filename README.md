@@ -1,4 +1,4 @@
-# 5dive CLI
+# 5dive
 
 [![install-smoke](https://github.com/5dive-com/5dive/actions/workflows/install-smoke.yml/badge.svg)](https://github.com/5dive-com/5dive/actions/workflows/install-smoke.yml)
 [![bundle-drift](https://github.com/5dive-com/5dive/actions/workflows/bundle-drift.yml/badge.svg)](https://github.com/5dive-com/5dive/actions/workflows/bundle-drift.yml)
