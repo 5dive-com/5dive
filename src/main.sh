@@ -96,11 +96,16 @@ Agents:
   5dive agent <name> tui                             # attach your terminal to the agent's tmux session
   5dive agent logs <name> [--follow] [--lines=N] [--tmux]
   5dive agent send <name> <text...> [--from=<sender>] [--raw]
+                                    [--reply-to-chat=<id> [--reply-to-msg=<id>]]
                                                      # inject a message (tmux send-keys + Enter).
                                                      # When called from another agent, auto-wraps as
                                                      # [5dive-msg from=<caller> id=<id>] so the
                                                      # receiver sees who's pinging it. --raw skips wrapping.
+                                                     # --reply-to-chat adds a hint telling the receiver
+                                                     # to reply directly in that Telegram/Discord chat
+                                                     # via its own bot (see SKILL.md).
   5dive agent ask <name> <text...> [--from=<sender>] [--timeout=120] [--idle-secs=5] [--poll-secs=2]
+                                   [--reply-to-chat=<id> [--reply-to-msg=<id>]]
                                                      # synchronous send + wait. Polls scrollback after
                                                      # the marker line until it stops growing for
                                                      # --idle-secs, then prints the reply body.

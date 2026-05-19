@@ -1927,15 +1927,18 @@ cmd_logs() {
 # this is CLI + direct-shelld only.
 cmd_send() {
   local name="" message="" from="" from_set=0 raw=0
+  local reply_to_chat="" reply_to_msg=""
   local -a positional=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --message=*) message="${1#--message=}" ;;
-      --from=*)    from="${1#--from=}"; from_set=1 ;;
-      --raw)       raw=1 ;;
-      --)          shift; positional+=("$@"); break ;;
-      -*)          fail "$E_USAGE" "unknown flag: $1" ;;
-      *)           positional+=("$1") ;;
+      --message=*)        message="${1#--message=}" ;;
+      --from=*)           from="${1#--from=}"; from_set=1 ;;
+      --raw)              raw=1 ;;
+      --reply-to-chat=*)  reply_to_chat="${1#--reply-to-chat=}" ;;
+      --reply-to-msg=*)   reply_to_msg="${1#--reply-to-msg=}" ;;
+      --)                 shift; positional+=("$@"); break ;;
+      -*)                 fail "$E_USAGE" "unknown flag: $1" ;;
+      *)                  positional+=("$1") ;;
     esac
     shift
   done
@@ -1943,7 +1946,7 @@ cmd_send() {
     name="${positional[0]}"
     positional=("${positional[@]:1}")
   fi
-  [[ -n "$name" ]] || fail "$E_USAGE" "usage: 5dive agent send <name> <text...> | --message=<text> [--from=<sender>] [--raw]"
+  [[ -n "$name" ]] || fail "$E_USAGE" "usage: 5dive agent send <name> <text...> | --message=<text> [--from=<sender>] [--raw] [--reply-to-chat=<id> [--reply-to-msg=<id>]]"
   if [[ -z "$message" && ${#positional[@]} -gt 0 ]]; then
     message="${positional[*]}"
   fi
@@ -1952,10 +1955,30 @@ cmd_send() {
   sudo -u "agent-${name}" tmux has-session -t "agent-${name}" 2>/dev/null \
     || fail "$E_NOT_RUNNING" "tmux session 'agent-${name}' not found (is the agent running?)"
 
-  # Wrap with [5dive-msg from=<sender> id=<id>] when this is an inter-agent
+  # Optional reply-target hint. If present, it tells the receiver: "the user is
+  # reachable in this chat — reply there directly via your own bot rather than
+  # back through me." --raw skips wrapping entirely, so combining the two has
+  # nowhere to put the hint.
+  if [[ -n "$reply_to_chat" || -n "$reply_to_msg" ]]; then
+    (( ! raw )) || fail "$E_USAGE" "--raw cannot be combined with --reply-to-chat/--reply-to-msg"
+  fi
+  if [[ -n "$reply_to_chat" ]]; then
+    valid_telegram_chat_id "$reply_to_chat" \
+      || fail "$E_VALIDATION" "invalid --reply-to-chat (expected numeric chat id, optionally negative)"
+  fi
+  if [[ -n "$reply_to_msg" ]]; then
+    [[ -n "$reply_to_chat" ]] \
+      || fail "$E_USAGE" "--reply-to-msg requires --reply-to-chat"
+    [[ "$reply_to_msg" =~ ^[0-9]{1,20}$ ]] \
+      || fail "$E_VALIDATION" "invalid --reply-to-msg (expected positive integer)"
+  fi
+
+  # Wrap with [5dive-msg from=<sender> id=<id> ...] when this is an inter-agent
   # send, so the receiver can see who's pinging it and reply by name. --raw
   # opts out (useful when piping prompts that already format themselves).
-  # --from explicitly empty (`--from=`) also opts out.
+  # --from explicitly empty (`--from=`) also opts out — unless --reply-to-chat
+  # is set, in which case we force-wrap (synthetic sender "human") so the hint
+  # actually reaches the receiver.
   local payload="$message" sender="" msg_id=""
   if (( ! raw )); then
     if (( from_set )); then
@@ -1963,19 +1986,26 @@ cmd_send() {
     else
       sender="$(auto_sender_from_sudo)"
     fi
+    if [[ -z "$sender" && -n "$reply_to_chat" ]]; then
+      sender="human"
+    fi
     if [[ -n "$sender" ]]; then
       valid_sender_label "$sender" \
         || fail "$E_VALIDATION" "invalid --from label '$sender' (lowercase letter start, [a-z0-9-], <=32 chars)"
       msg_id="$(gen_msg_id)"
-      payload="[5dive-msg from=${sender} id=${msg_id}] ${message}"
+      local header="[5dive-msg from=${sender} id=${msg_id}"
+      [[ -n "$reply_to_chat" ]] && header+=" reply-to-chat=${reply_to_chat}"
+      [[ -n "$reply_to_msg" ]] && header+=" reply-to-msg=${reply_to_msg}"
+      header+="]"
+      payload="${header} ${message}"
     fi
   fi
 
   sudo -u "agent-${name}" tmux send-keys -t "agent-${name}" -l -- "$payload"
   sudo -u "agent-${name}" tmux send-keys -t "agent-${name}" Enter
   ok "sent to agent '$name'." \
-     '{name:$n, sent:true, bytes:($p|length), from:($s|select(length>0)), msg_id:($i|select(length>0))}' \
-     --arg n "$name" --arg p "$payload" --arg s "$sender" --arg i "$msg_id"
+     '{name:$n, sent:true, bytes:($p|length), from:($s|select(length>0)), msg_id:($i|select(length>0)), reply_to_chat:($rc|select(length>0)), reply_to_msg:($rm|select(length>0))}' \
+     --arg n "$name" --arg p "$payload" --arg s "$sender" --arg i "$msg_id" --arg rc "$reply_to_chat" --arg rm "$reply_to_msg"
 }
 
 # Synchronous send + wait — the inter-agent counterpart to cmd_send. Drops the
@@ -1988,19 +2018,22 @@ cmd_send() {
 # will keep us awake until --timeout — that's correct behaviour.
 cmd_ask() {
   local name="" message="" from="" from_set=0
+  local reply_to_chat="" reply_to_msg=""
   local timeout=120 idle=5 poll=2 buf_lines=2000
   local -a positional=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --message=*)     message="${1#--message=}" ;;
-      --from=*)        from="${1#--from=}"; from_set=1 ;;
-      --timeout=*)     timeout="${1#--timeout=}" ;;
-      --idle-secs=*)   idle="${1#--idle-secs=}" ;;
-      --poll-secs=*)   poll="${1#--poll-secs=}" ;;
-      --buffer-lines=*) buf_lines="${1#--buffer-lines=}" ;;
-      --)              shift; positional+=("$@"); break ;;
-      -*)              fail "$E_USAGE" "unknown flag: $1" ;;
-      *)               positional+=("$1") ;;
+      --message=*)        message="${1#--message=}" ;;
+      --from=*)           from="${1#--from=}"; from_set=1 ;;
+      --reply-to-chat=*)  reply_to_chat="${1#--reply-to-chat=}" ;;
+      --reply-to-msg=*)   reply_to_msg="${1#--reply-to-msg=}" ;;
+      --timeout=*)        timeout="${1#--timeout=}" ;;
+      --idle-secs=*)      idle="${1#--idle-secs=}" ;;
+      --poll-secs=*)      poll="${1#--poll-secs=}" ;;
+      --buffer-lines=*)   buf_lines="${1#--buffer-lines=}" ;;
+      --)                 shift; positional+=("$@"); break ;;
+      -*)                 fail "$E_USAGE" "unknown flag: $1" ;;
+      *)                  positional+=("$1") ;;
     esac
     shift
   done
@@ -2008,7 +2041,7 @@ cmd_ask() {
     name="${positional[0]}"
     positional=("${positional[@]:1}")
   fi
-  [[ -n "$name" ]] || fail "$E_USAGE" "usage: 5dive agent ask <name> <text...> [--from=<sender>] [--timeout=120] [--idle-secs=5] [--poll-secs=2]"
+  [[ -n "$name" ]] || fail "$E_USAGE" "usage: 5dive agent ask <name> <text...> [--from=<sender>] [--reply-to-chat=<id> [--reply-to-msg=<id>]] [--timeout=120] [--idle-secs=5] [--poll-secs=2]"
   if [[ -z "$message" && ${#positional[@]} -gt 0 ]]; then
     message="${positional[*]}"
   fi
@@ -2017,6 +2050,17 @@ cmd_ask() {
     [[ "$n" =~ ^[0-9]+$ ]] || fail "$E_VALIDATION" "timeout/idle/poll/buffer-lines must be positive integers"
   done
   (( poll >= 1 )) || fail "$E_VALIDATION" "--poll-secs must be >= 1"
+
+  if [[ -n "$reply_to_chat" ]]; then
+    valid_telegram_chat_id "$reply_to_chat" \
+      || fail "$E_VALIDATION" "invalid --reply-to-chat (expected numeric chat id, optionally negative)"
+  fi
+  if [[ -n "$reply_to_msg" ]]; then
+    [[ -n "$reply_to_chat" ]] \
+      || fail "$E_USAGE" "--reply-to-msg requires --reply-to-chat"
+    [[ "$reply_to_msg" =~ ^[0-9]{1,20}$ ]] \
+      || fail "$E_VALIDATION" "invalid --reply-to-msg (expected positive integer)"
+  fi
 
   require_agent "$name"
   sudo -u "agent-${name}" tmux has-session -t "agent-${name}" 2>/dev/null \
@@ -2036,7 +2080,11 @@ cmd_ask() {
   valid_sender_label "$sender" \
     || fail "$E_VALIDATION" "invalid --from label '$sender' (lowercase letter start, [a-z0-9-], <=32 chars)"
   msg_id="$(gen_msg_id)"
-  local payload="[5dive-msg from=${sender} id=${msg_id}] ${message}"
+  local header="[5dive-msg from=${sender} id=${msg_id}"
+  [[ -n "$reply_to_chat" ]] && header+=" reply-to-chat=${reply_to_chat}"
+  [[ -n "$reply_to_msg" ]] && header+=" reply-to-msg=${reply_to_msg}"
+  header+="]"
+  local payload="${header} ${message}"
 
   sudo -u "agent-${name}" tmux send-keys -t "agent-${name}" -l -- "$payload"
   sudo -u "agent-${name}" tmux send-keys -t "agent-${name}" Enter
@@ -2051,7 +2099,7 @@ cmd_ask() {
     # Everything after the first line containing our marker. The receiver's
     # CLI typically echoes the user input once, so the slice begins right
     # after that echo and grows as the receiver responds.
-    slice=$(awk -v id="id=${msg_id}]" 'found {print} index($0, id) {found=1}' <<<"$capture")
+    slice=$(awk -v id="id=${msg_id}" 'found {print} index($0, id) {found=1}' <<<"$capture")
 
     if [[ "$slice" != "$prev_slice" ]]; then
       last_change=$now
@@ -2069,7 +2117,8 @@ cmd_ask() {
 
   if (( JSON_MODE )); then
     jq -Rn --arg n "$name" --arg s "$sender" --arg i "$msg_id" --arg r "$reply" \
-      '{ok:true, data:{name:$n, from:$s, msg_id:$i, reply:$r}}'
+      --arg rc "$reply_to_chat" --arg rm "$reply_to_msg" \
+      '{ok:true, data:{name:$n, from:$s, msg_id:$i, reply:$r, reply_to_chat:($rc|select(length>0)), reply_to_msg:($rm|select(length>0))}}'
   else
     printf '%s\n' "$reply"
   fi
