@@ -12,6 +12,7 @@ claude agent's only output channel is a Telegram chat.
 | `stop-telegram-reply-check.sh` | `Stop` | Catches the "got a Telegram message this turn, didn't call `mcp__plugin_telegram_telegram__reply`" slip — the agent thought it answered but only wrote to the transcript. Three branches: relay the transcript text to Telegram, block the Stop so the agent retries, or send a diagnostic. Loop-safe via three independent guards. |
 | `stop-failure-telegram.sh` | `StopFailure` | Relays failure details to the paired chat. On rate-limit specifically: auto-presses "1" (wait) on the blocking tmux prompt and spawns `resume-after-reset.sh` so the session wakes itself when the limit clears. |
 | `resume-after-reset.sh` | — (helper) | Not a hook — spawned detached by `stop-failure-telegram.sh`. Sleeps until the parsed reset epoch, sends `continue` + Enter to the original tmux pane, then pings Telegram so the user knows the agent is back. |
+| `mirror-agent-send.sh` | `PostToolUse` (matcher: `Bash`) | Mirrors outbound `5dive agent send|ask` traffic to a shared Telegram group when the agent's `access.json` lists a group/supergroup chat. Lets the human operator watch agent-to-agent conversations from one room. Silent when no group is present (DM-only agents). |
 
 ## Lifecycle
 

@@ -34,6 +34,12 @@
 set -u
 payload=$(cat)
 
+# Allow buffered transcript writes to settle before we read. Node's
+# fs.appendFile() is async and the last assistant entry can be in-flight
+# when Stop fires, which previously caused the hook to relay a stale
+# (older) text and miss the latest one.
+sleep 0.05
+
 TG_PREFIX='mcp__plugin_telegram_telegram__'
 
 stop_active=$(printf '%s' "$payload" | jq -r '.stop_hook_active // false' 2>/dev/null)
@@ -42,6 +48,10 @@ transcript_path=$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/
 
 lock_key=$(printf '%s' "$transcript_path" | sha1sum | cut -d' ' -f1)
 lock_file="/tmp/5dive-stopblock-${lock_key}.lock"
+# Shared state with posttool-telegram-relay.sh: "<turn_start>|<relayed_count>".
+# Tracks which assistant text blocks have already been pushed to Telegram
+# in this turn so the two hooks don't double-send.
+relay_state_file="/tmp/5dive-tg-relay-${lock_key}.state"
 
 # Stale-lock GC: a lock older than 1h is from a crashed prior run, not a
 # live re-entry. Remove so it doesn't suppress a legitimate future block.
@@ -83,7 +93,7 @@ if [[ "$stop_active" == "true" ]]; then
     fi
 
     if [[ -n "$cached_chat" && -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
-      diag="(auto-relay) Agent stopped without a Telegram reply and produced no transcript text"
+      diag="[5dive] Agent stopped without a Telegram reply and produced no transcript text"
       [[ -n "$cached_msg" ]] && diag+=" (unanswered message_id=${cached_msg})"
       diag+=". Retry-after-block already attempted; check journalctl on the host."
       curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
@@ -107,8 +117,10 @@ fi
 #     mcp__plugin_telegram_telegram__{reply,react,edit_message} tools. Any
 #     of those satisfies the "something reached Telegram" rule — a pure
 #     reaction-only turn (e.g. acking a status ping) is intentional.
-#   - last_text: the latest assistant text content in the turn — what we
-#     auto-relay if a slip is detected.
+#   - texts: every non-empty assistant text block in the turn, in order.
+#     We auto-relay every block past relayed_count from the state file;
+#     joining all-unrelayed beats picking just the last one, which used
+#     to miss text emitted before mid-turn tool calls.
 #   - last_chat_id / last_message_id: chat_id and message_id from the
 #     most-recent inbound — chat is who we relay to; message_id goes into
 #     the block reason / diagnostic so the operator can identify which
@@ -125,6 +137,7 @@ analysis=$(jq -s --arg tg "$TG_PREFIX" '
   ) as $turn_start
   | .[$turn_start:] as $turn
   | {
+      turn_start: $turn_start,
       had_telegram_inbound: (
         [ $turn[]
           | select(.type == "user")
@@ -139,13 +152,13 @@ analysis=$(jq -s --arg tg "$TG_PREFIX" '
           | select(.type == "tool_use" and (.name | startswith($tg)))
         ] | length > 0
       ),
-      last_text: (
+      texts: (
         [ $turn[]
           | select(.type == "assistant")
           | (.message.content // [])
           | map(select(.type == "text") | .text) | join("\n")
           | select(length > 0)
-        ] | last // ""
+        ]
       ),
       last_chat_id: (
         [ $turn[]
@@ -168,9 +181,10 @@ analysis=$(jq -s --arg tg "$TG_PREFIX" '
 
 [[ -z "$analysis" ]] && exit 0
 
+turn_start=$(printf '%s' "$analysis" | jq -r '.turn_start // 0')
 had_inbound=$(printf '%s' "$analysis" | jq -r '.had_telegram_inbound // false')
 had_tool=$(printf '%s' "$analysis" | jq -r '.had_telegram_tool_call // false')
-last_text=$(printf '%s' "$analysis" | jq -r '.last_text // ""')
+total_texts=$(printf '%s' "$analysis" | jq -r '.texts | length')
 chat_id=$(printf '%s' "$analysis" | jq -r '.last_chat_id // ""')
 message_id=$(printf '%s' "$analysis" | jq -r '.last_message_id // ""')
 
@@ -180,19 +194,45 @@ message_id=$(printf '%s' "$analysis" | jq -r '.last_message_id // ""')
 [[ -n "$chat_id" ]] || exit 0
 [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]] || exit 0
 
-trimmed=$(printf '%s' "$last_text" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-
-# Auto-relay path: text exists → send it (prefix "(auto-relay)" so the user
-# can tell the agent slipped). Never blocks, never loops.
-if [[ -n "$trimmed" ]]; then
-  text="(auto-relay) ${trimmed}"
-  if (( ${#text} > 4000 )); then
-    text="${text:0:3960}… [truncated; see journalctl on the host]"
+# How much did posttool-telegram-relay.sh already relay for this turn?
+# Mismatched turn_start in state file = new turn = start at 0.
+relayed=0
+if [[ -f "$relay_state_file" ]]; then
+  prev_start=""
+  prev_count=""
+  IFS='|' read -r prev_start prev_count < "$relay_state_file" 2>/dev/null || true
+  if [[ "$prev_start" == "$turn_start" ]]; then
+    relayed="${prev_count:-0}"
   fi
-  curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-    --data-urlencode "chat_id=${chat_id}" \
-    --data-urlencode "text=${text}" \
-    -o /dev/null 2>/dev/null || true
+fi
+
+# Auto-relay path: collect every text past the relayed counter, join, send.
+# Catches both the "single text + Stop" case (relayed=0, total=1) and the
+# "text + tool + text + Stop" case where posttool already pushed the first
+# block and we now need to send the trailing one.
+if (( total_texts > relayed )); then
+  new_text=$(printf '%s' "$analysis" | jq -r --argjson n "$relayed" '
+    .texts[$n:] | join("\n\n")
+  ')
+  trimmed=$(printf '%s' "$new_text" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  if [[ -n "$trimmed" ]]; then
+    text="$trimmed"
+    if (( ${#text} > 4000 )); then
+      text="${text:0:3960}… [truncated; see journalctl on the host]"
+    fi
+    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+      --data-urlencode "chat_id=${chat_id}" \
+      --data-urlencode "text=${text}" \
+      -o /dev/null 2>/dev/null || true
+    printf '%s|%s' "$turn_start" "$total_texts" > "$relay_state_file" 2>/dev/null || true
+    exit 0
+  fi
+fi
+
+# Everything in this turn was already relayed by the posttool hook — the
+# user's been kept in the loop. Skip the empty-text block path (it would
+# wrongly trigger a "no transcript text" diagnostic).
+if (( relayed > 0 )); then
   exit 0
 fi
 

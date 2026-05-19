@@ -9,6 +9,16 @@ PRETOOL_TELEGRAM_HOOK="/usr/local/lib/5dive/pretool-telegram-question.sh"
 # Path to the shared Stop hook that catches "Telegram inbound this turn but
 # no reply tool call" slips and auto-relays the assistant's transcript text.
 STOP_TELEGRAM_REPLY_HOOK="/usr/local/lib/5dive/stop-telegram-reply-check.sh"
+# Path to the shared PostToolUse hook that pairs with the Stop hook —
+# relays new assistant text after each tool call so multiple in-turn
+# texts don't get coalesced or lost when the model emits text → tool →
+# text without ever calling reply.
+POSTTOOL_TELEGRAM_RELAY_HOOK="/usr/local/lib/5dive/posttool-telegram-relay.sh"
+# Path to the shared PostToolUse hook (matcher: Bash) that mirrors
+# outbound `5dive agent send|ask` to the shared Telegram group when the
+# agent's access.json lists at least one group chat. Lets the human
+# operator watch agent-to-agent traffic alongside their own DMs.
+MIRROR_AGENT_SEND_HOOK="/usr/local/lib/5dive/mirror-agent-send.sh"
 AGENT_SKILLS_DIR="/usr/local/lib/5dive/skills"
 
 # Preseed a claude-family agent's home dir so:
@@ -74,16 +84,26 @@ JSON
       || warn "$PRETOOL_TELEGRAM_HOOK missing — PreToolUse hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
     [[ -x "$STOP_TELEGRAM_REPLY_HOOK" ]] \
       || warn "$STOP_TELEGRAM_REPLY_HOOK missing — Stop hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
+    [[ -x "$POSTTOOL_TELEGRAM_RELAY_HOOK" ]] \
+      || warn "$POSTTOOL_TELEGRAM_RELAY_HOOK missing — PostToolUse hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
+    [[ -x "$MIRROR_AGENT_SEND_HOOK" ]] \
+      || warn "$MIRROR_AGENT_SEND_HOOK missing — inter-agent mirror hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
     settings=$(jq \
       --arg hook "$STOP_FAILURE_HOOK" \
       --arg pretool "$PRETOOL_TELEGRAM_HOOK" \
-      --arg stopreply "$STOP_TELEGRAM_REPLY_HOOK" '
+      --arg stopreply "$STOP_TELEGRAM_REPLY_HOOK" \
+      --arg posttool "$POSTTOOL_TELEGRAM_RELAY_HOOK" \
+      --arg mirror "$MIRROR_AGENT_SEND_HOOK" '
       . + {
         enabledPlugins: {"telegram@claude-plugins-official": true},
         hooks: {
           Stop: [{hooks: [{type: "command", command: $stopreply, timeout: 10}]}],
           StopFailure: [{hooks: [{type: "command", command: $hook, timeout: 10}]}],
-          PreToolUse: [{matcher: "AskUserQuestion|ExitPlanMode", hooks: [{type: "command", command: $pretool, timeout: 5}]}]
+          PreToolUse: [{matcher: "AskUserQuestion|ExitPlanMode", hooks: [{type: "command", command: $pretool, timeout: 5}]}],
+          PostToolUse: [
+            {hooks: [{type: "command", command: $posttool, timeout: 10}]},
+            {matcher: "Bash", hooks: [{type: "command", command: $mirror, timeout: 5}]}
+          ]
         }
       }
     ' <<<"$settings")
