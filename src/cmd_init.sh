@@ -11,9 +11,9 @@ cmd_init() {
 
   cat >&2 <<'WELCOME'
 
-  ░█▀▄░▒█▀▄░▀█▀░█░▒█░█▀▀
-  ░█░█░░█░█░░█░░▒█░▒█░█▀▀
-  ░█▀▀░░█▀▀░▀▀▀░░▀▀▀░▀▀▀     interactive setup
+  ░█▀▀░█▀▄░▀█▀░█░█░█▀▀
+  ░▀▀▄░█░█░░█░░█░█░█▀▀
+  ░▀▀▀░█▀▀░▀▀▀░░▀░░▀▀▀     interactive setup
 
 WELCOME
 
@@ -25,7 +25,7 @@ WELCOME
     [gemini]="Google Gemini CLI"
     [hermes]="Open-source agent — bring your own provider"
     [openclaw]="Open-source agent — bring your own provider"
-    [opencode]="Open-source agent backed by OpenAI key"
+    [opencode]="Open-source agent — bring your own provider"
   )
   echo "Pick an agent type:" >&2
   local i=1
