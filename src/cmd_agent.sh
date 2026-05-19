@@ -1323,6 +1323,163 @@ PY
      --arg n "$name"
 }
 
+# Drop a pending pairing entry without approving it. The dashboard's inbox
+# UI calls this when the operator clicks "Ignore" on a stranger's DM —
+# removes the code from access.json's pending map so it stops showing in
+# the modal, but does NOT add the senderId to allowFrom. The plugin will
+# re-prompt with a fresh code if the same sender messages again.
+cmd_telegram_pending_ignore() {
+  local name="" code=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -*) fail "$E_USAGE" "unknown flag: $1" ;;
+      *)  if [[ -z "$name" ]]; then name="$1"
+          elif [[ -z "$code" ]]; then code="$1"
+          else fail "$E_USAGE" "extra arg: $1"; fi ;;
+    esac
+    shift
+  done
+  [[ -n "$name" && -n "$code" ]] \
+    || fail "$E_USAGE" "usage: 5dive agent telegram-pending-ignore <name> <code>"
+  [[ "$code" =~ ^[A-Za-z0-9]{4,16}$ ]] \
+    || fail "$E_VALIDATION" "invalid code format"
+  ensure_state
+  local reg type channels
+  reg=$(registry_read)
+  jq -e --arg n "$name" '.agents[$n] != null' <<<"$reg" >/dev/null \
+    || fail "$E_NOT_FOUND" "no agent named '$name'"
+  type=$(jq -r --arg n "$name" '.agents[$n].type' <<<"$reg")
+  channels=$(jq -r --arg n "$name" '.agents[$n].channels' <<<"$reg")
+  [[ "$type" == "claude" ]] \
+    || fail "$E_VALIDATION" "telegram-pending-ignore only applies to claude agents (got type=$type)"
+  [[ "$channels" == "telegram" ]] \
+    || fail "$E_VALIDATION" "agent '$name' has channels=$channels — telegram-pending-ignore only applies to telegram"
+
+  local user="agent-${name}"
+  local access="/home/${user}/.claude/channels/telegram/access.json"
+  local err
+  err=$(sudo -u "$user" env ACCESS="$access" CODE="$code" python3 - <<'PY' 2>&1 >/dev/null
+import json, os, sys, tempfile
+
+path = os.environ['ACCESS']
+code = os.environ['CODE']
+
+try:
+    with open(path) as f:
+        data = json.load(f)
+except FileNotFoundError:
+    print("access.json not found — nothing pending", file=sys.stderr); sys.exit(2)
+
+pending = data.get('pending') or {}
+if code not in pending:
+    print(f"code '{code}' is not pending", file=sys.stderr); sys.exit(2)
+pending.pop(code, None)
+data['pending'] = pending
+
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.access.', suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
+    json.dump(data, f, indent=2)
+os.replace(tmp, path)
+PY
+  ) || fail "$E_PAIRING" "${err:-pending-ignore failed}"
+
+  ok "ignored pending pairing '$code' for '$name'" \
+     '{name:$n, code:$c, ignored:true}' \
+     --arg n "$name" --arg c "$code"
+}
+
+# Resolve a public Telegram handle (e.g. @other_bot) to its numeric user id
+# using the agent's own bot token to call getChat. Used by the dashboard's
+# add-allowlist UX so users can paste a handle instead of looking up the
+# numeric id. Returns {id, isBot, username, displayName}. Token stays
+# server-side. The returned id can then be written into allowFrom by the
+# regular telegram-access set path — no schema change.
+cmd_telegram_resolve_handle() {
+  local name="" handle=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -*) fail "$E_USAGE" "unknown flag: $1" ;;
+      *)  if [[ -z "$name" ]]; then name="$1"
+          elif [[ -z "$handle" ]]; then handle="$1"
+          else fail "$E_USAGE" "extra arg: $1"; fi ;;
+    esac
+    shift
+  done
+  [[ -n "$name" && -n "$handle" ]] \
+    || fail "$E_USAGE" "usage: 5dive agent telegram-resolve-handle <name> <@handle>"
+  # Normalise: accept "@foo" or "foo", reject anything weird.
+  handle="${handle#@}"
+  [[ "$handle" =~ ^[A-Za-z][A-Za-z0-9_]{3,31}$ ]] \
+    || fail "$E_VALIDATION" "invalid handle (expected 5-32 chars, letters/digits/underscore)"
+  ensure_state
+  local reg type channels
+  reg=$(registry_read)
+  jq -e --arg n "$name" '.agents[$n] != null' <<<"$reg" >/dev/null \
+    || fail "$E_NOT_FOUND" "no agent named '$name'"
+  type=$(jq -r --arg n "$name" '.agents[$n].type' <<<"$reg")
+  channels=$(jq -r --arg n "$name" '.agents[$n].channels' <<<"$reg")
+  [[ "$type" == "claude" ]] \
+    || fail "$E_VALIDATION" "telegram-resolve-handle only applies to claude agents (got type=$type)"
+  [[ "$channels" == "telegram" ]] \
+    || fail "$E_VALIDATION" "agent '$name' has channels=$channels — telegram-resolve-handle only applies to telegram"
+
+  local token_env="${CONNECTORS_DIR}/telegram-${name}.env"
+  local token
+  token=$(sed -n 's/^TELEGRAM_BOT_TOKEN=//p' "$token_env" 2>/dev/null | head -1 || true)
+  [[ -n "$token" ]] \
+    || fail "$E_AUTH_REQUIRED" "no telegram bot token for agent '$name' (expected ${token_env})"
+
+  local resp
+  resp=$(curl -sS -m 10 --get \
+    --data-urlencode "chat_id=@${handle}" \
+    "https://api.telegram.org/bot${token}/getChat" 2>/dev/null || true)
+  if ! jq -e . >/dev/null 2>&1 <<<"$resp"; then
+    fail "$E_GENERIC" "telegram api unreachable"
+  fi
+  if [[ "$(jq -r '.ok' <<<"$resp" 2>/dev/null)" != "true" ]]; then
+    local desc
+    desc=$(jq -r '.description // "telegram api error"' <<<"$resp" 2>/dev/null)
+    # getChat returns "Bad Request: chat not found" for unknown handles; map
+    # to NOT_FOUND so the dashboard can show a friendly "no such bot" message.
+    case "$desc" in
+      *"chat not found"*|*"chat_id is empty"*) fail "$E_NOT_FOUND" "telegram: $desc" ;;
+      *) fail "$E_GENERIC" "telegram: $desc" ;;
+    esac
+  fi
+
+  # Per Bot API: getChat returns a Chat object (not User), which has no
+  # is_bot field — that lives on User and is only delivered with inbound
+  # messages. We derive isBot from the handle convention: Telegram requires
+  # all bot usernames to end in "bot" at registration (case-insensitive),
+  # so the suffix is a reliable signal for type=private chats.
+  local chat_id chat_type username first_name last_name
+  chat_id=$(jq -r '.result.id // empty' <<<"$resp")
+  chat_type=$(jq -r '.result.type // empty' <<<"$resp")
+  username=$(jq -r '.result.username // empty' <<<"$resp")
+  first_name=$(jq -r '.result.first_name // empty' <<<"$resp")
+  last_name=$(jq -r '.result.last_name // empty' <<<"$resp")
+  [[ -n "$chat_id" ]] \
+    || fail "$E_GENERIC" "telegram getChat returned no id"
+
+  local is_bot=false
+  if [[ "$chat_type" == "private" ]] && [[ "${username,,}" == *bot ]]; then
+    is_bot=true
+  fi
+
+  # Compose a display name: prefer first+last, fall back to @handle.
+  local display="$first_name"
+  [[ -n "$last_name" ]] && display="${display:+$display }${last_name}"
+  [[ -z "$display" ]] && display="@${username:-$handle}"
+
+  ok "resolved @${username:-$handle} → $chat_id" \
+     '{id:$id, isBot:($b == "true"), type:$t, username:$u, displayName:$d}' \
+     --arg id "$chat_id" \
+     --arg b  "$is_bot" \
+     --arg t  "$chat_type" \
+     --arg u  "$username" \
+     --arg d  "$display"
+}
+
 # Interactive pairing for a telegram- or discord-enabled claude-family agent.
 # Two paths:
 #   --code=<code>     classic: user DMs bot, bot replies with "pair <code>",

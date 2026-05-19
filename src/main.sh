@@ -88,6 +88,11 @@ Agents:
   5dive agent telegram-access get <name>             # read access.json: who can DM the bot, group settings.
   5dive agent telegram-access set <name>             # write access.json from {dmPolicy,allowFrom,groups} JSON
                                                      # piped on stdin. Plugin re-reads per-message — no restart.
+  5dive agent telegram-pending-ignore <name> <code>  # drop a pending pairing without approving (dashboard inbox).
+  5dive agent telegram-resolve-handle <name> <@handle>
+                                                     # getChat for @handle via the agent's bot token; returns
+                                                     # {id,isBot,displayName} so the dashboard can add bots by
+                                                     # handle instead of numeric id.
   5dive agent <name> tui                             # attach your terminal to the agent's tmux session
   5dive agent logs <name> [--follow] [--lines=N] [--tmux]
   5dive agent send <name> <text...> [--from=<sender>] [--raw]
@@ -232,6 +237,13 @@ main() {
               cmd_telegram_access_set "$@" ;;
             *) fail "$E_USAGE" "unknown telegram-access command: $accesscmd" ;;
           esac ;;
+        telegram-pending-ignore)
+          AUDIT_CMD="agent telegram-pending-ignore"; AUDIT_ARGS=("$@")
+          cmd_telegram_pending_ignore "$@" ;;
+        telegram-resolve-handle)
+          # Read-only getChat lookup against Telegram. Bot token stays
+          # server-side; skip audit so handle probes don't spam the log.
+          cmd_telegram_resolve_handle "$@" ;;
         install)
           AUDIT_CMD="agent install"; AUDIT_ARGS=("$@")
           cmd_install "$@" ;;   # no registry mutation; auditable install recipe
