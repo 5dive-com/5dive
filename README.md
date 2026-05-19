@@ -84,8 +84,8 @@ If you'd rather click than `ssh`, [5dive.com](https://5dive.com) is the managed 
 | `claude`   | Anthropic Claude | OAuth / API key | Telegram, Discord |
 | `codex`    | OpenAI Codex     | OAuth / API key | — |
 | `gemini`   | Google Gemini    | OAuth / API key | — |
-| `hermes`   | third-party multi-provider harness | API key | Telegram, Discord |
-| `openclaw` | third-party multi-provider harness | API key | Telegram, Discord |
+| `hermes`   | third-party multi-provider harness | OAuth (OpenAI) / API key | Telegram, Discord |
+| `openclaw` | third-party multi-provider harness | OAuth (OpenAI) / API key | Telegram, Discord |
 | `opencode` | OpenCode | API key | — |
 
 `hermes` and `openclaw` are community-built harnesses that can route to many providers (OpenRouter, Anthropic, Google, Moonshot, etc.). As of April 4, 2026, Anthropic and Google no longer permit routing consumer subscription OAuth (Claude Pro/Max, Gemini) through third-party harnesses — for that work, use the official `claude` or `gemini` types with your own API key. Background: [We Ditched OpenClaw for Claude →](https://blog.5dive.com/blog/we-ditched-openclaw-for-claude/).
