@@ -1,2 +1,34 @@
+# Internal punch lists (kept local, never committed)
 *_TASKS.md
+
+# OS cruft
 .DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node / Bun (any local UI or tooling working trees)
+node_modules/
+dist/
+build/
+.cache/
+bun.lockb
+
+# Logs
+*.log
+npm-debug.log*
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Recovered or stashed working trees (e.g. the removed ui/ Vite SPA
+# from commit 8932961 — strategic removal; if anyone restores it locally,
+# don't let it accidentally get re-added to the OSS repo)
+/ui/
