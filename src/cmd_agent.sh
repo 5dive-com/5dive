@@ -1388,16 +1388,21 @@ PY
      --arg n "$name" --arg c "$code"
 }
 
-# Resolve a public Telegram handle (e.g. @other_bot) to its numeric user id
-# using the agent's own bot token to call getChat. Used by the dashboard's
-# add-allowlist UX so users can paste a handle instead of looking up the
-# numeric id. Returns {id, isBot, username, displayName}. Token stays
-# server-side. The returned id can then be written into allowFrom by the
-# regular telegram-access set path — no schema change.
+# Resolve a Telegram chat reference — either a public @handle or a numeric
+# chat id — to its full identity (id, displayName, type, isBot) via the
+# agent's own bot token calling getChat. Used by the dashboard's
+# add-allowlist UX (paste @handle instead of digging up an id) AND by the
+# load-time name enrichment (turn cryptic ids in allowFrom into "Mark ·
+# @lodar"). Token stays server-side. Returned id can then be written into
+# allowFrom by the regular telegram-access set path — no schema change.
 cmd_telegram_resolve_handle() {
   local name="" handle=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -[0-9]*) # leading-minus numeric — a group/channel id, not a flag
+        if [[ -z "$name" ]]; then name="$1"
+        elif [[ -z "$handle" ]]; then handle="$1"
+        else fail "$E_USAGE" "extra arg: $1"; fi ;;
       -*) fail "$E_USAGE" "unknown flag: $1" ;;
       *)  if [[ -z "$name" ]]; then name="$1"
           elif [[ -z "$handle" ]]; then handle="$1"
@@ -1406,11 +1411,24 @@ cmd_telegram_resolve_handle() {
     shift
   done
   [[ -n "$name" && -n "$handle" ]] \
-    || fail "$E_USAGE" "usage: 5dive agent telegram-resolve-handle <name> <@handle>"
-  # Normalise: accept "@foo" or "foo", reject anything weird.
-  handle="${handle#@}"
-  [[ "$handle" =~ ^[A-Za-z][A-Za-z0-9_]{3,31}$ ]] \
-    || fail "$E_VALIDATION" "invalid handle (expected 5-32 chars, letters/digits/underscore)"
+    || fail "$E_USAGE" "usage: 5dive agent telegram-resolve-handle <name> <@handle|chat_id>"
+  # Note on arg parsing: a leading '-' on the handle arg (e.g. group id
+  # -100123…) would normally match the -* flag glob and error out. The
+  # case branch above handles this by accepting -[0-9]* positionally.
+  # Normalise: accept "@foo", "foo", or a numeric chat id. Anything else is
+  # rejected. Numeric ids may be negative for groups/channels.
+  local lookup
+  if [[ "$handle" =~ ^-?[0-9]{1,20}$ ]]; then
+    # Numeric id — pass through verbatim. getChat accepts these for chats
+    # the bot can see (users who've messaged it, groups it's in, public
+    # channels). Failures map to NOT_FOUND below.
+    lookup="$handle"
+  else
+    handle="${handle#@}"
+    [[ "$handle" =~ ^[A-Za-z][A-Za-z0-9_]{3,31}$ ]] \
+      || fail "$E_VALIDATION" "invalid handle (expected 5-32 chars, letters/digits/underscore, or a numeric id)"
+    lookup="@${handle}"
+  fi
   ensure_state
   local reg type channels
   reg=$(registry_read)
@@ -1431,7 +1449,7 @@ cmd_telegram_resolve_handle() {
 
   local resp
   resp=$(curl -sS -m 10 --get \
-    --data-urlencode "chat_id=@${handle}" \
+    --data-urlencode "chat_id=${lookup}" \
     "https://api.telegram.org/bot${token}/getChat" 2>/dev/null || true)
   if ! jq -e . >/dev/null 2>&1 <<<"$resp"; then
     fail "$E_GENERIC" "telegram api unreachable"
@@ -1452,12 +1470,17 @@ cmd_telegram_resolve_handle() {
   # messages. We derive isBot from the handle convention: Telegram requires
   # all bot usernames to end in "bot" at registration (case-insensitive),
   # so the suffix is a reliable signal for type=private chats.
-  local chat_id chat_type username first_name last_name
-  chat_id=$(jq -r '.result.id // empty' <<<"$resp")
-  chat_type=$(jq -r '.result.type // empty' <<<"$resp")
-  username=$(jq -r '.result.username // empty' <<<"$resp")
+  #
+  # Chat objects: users/bots have first_name + optional last_name + optional
+  # username. Groups/supergroups/channels have title + optional username.
+  # We read both branches and prefer whichever populates.
+  local chat_id chat_type username first_name last_name title
+  chat_id=$(jq -r '.result.id // empty'         <<<"$resp")
+  chat_type=$(jq -r '.result.type // empty'     <<<"$resp")
+  username=$(jq -r '.result.username // empty'  <<<"$resp")
   first_name=$(jq -r '.result.first_name // empty' <<<"$resp")
-  last_name=$(jq -r '.result.last_name // empty' <<<"$resp")
+  last_name=$(jq -r '.result.last_name // empty'   <<<"$resp")
+  title=$(jq -r '.result.title // empty'        <<<"$resp")
   [[ -n "$chat_id" ]] \
     || fail "$E_GENERIC" "telegram getChat returned no id"
 
@@ -1466,12 +1489,24 @@ cmd_telegram_resolve_handle() {
     is_bot=true
   fi
 
-  # Compose a display name: prefer first+last, fall back to @handle.
-  local display="$first_name"
-  [[ -n "$last_name" ]] && display="${display:+$display }${last_name}"
-  [[ -z "$display" ]] && display="@${username:-$handle}"
+  # Compose displayName by chat type. Falls back through: title (group/channel)
+  # → first+last (user/bot) → @username → @handle from input → numeric id.
+  local display="$title"
+  if [[ -z "$display" ]]; then
+    display="$first_name"
+    [[ -n "$last_name" ]] && display="${display:+$display }${last_name}"
+  fi
+  if [[ -z "$display" ]]; then
+    if [[ -n "$username" ]]; then display="@${username}"
+    elif [[ -n "${handle:-}" ]]; then display="@${handle}"
+    else display="$chat_id"
+    fi
+  fi
 
-  ok "resolved @${username:-$handle} → $chat_id" \
+  local label="$display"
+  [[ -n "$username" && "$display" != "@${username}" ]] && label="$display · @${username}"
+
+  ok "resolved $label → $chat_id" \
      '{id:$id, isBot:($b == "true"), type:$t, username:$u, displayName:$d}' \
      --arg id "$chat_id" \
      --arg b  "$is_bot" \
