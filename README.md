@@ -73,7 +73,7 @@ The CLI is the OSS surface — every verb here, every agent, every host, all dri
 
 If you'd rather click than `ssh`, [5dive.com](https://5dive.com) is the managed version: same CLI under the hood, but the VM, hardening, backups, and dashboard are run for you.
 
-<video src="https://raw.githubusercontent.com/5dive-com/assets/refs/heads/main/hero-demo.mp4" autoplay loop muted playsinline width="100%"></video>
+<video src="https://cdn.jsdelivr.net/gh/5dive-com/assets@main/hero-demo.mp4" autoplay loop muted playsinline width="100%"></video>
 
 ---
 
