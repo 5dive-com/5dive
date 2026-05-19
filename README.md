@@ -17,7 +17,8 @@ spawn and manage AI agents that talk to each other.
 # 1. install
 curl -fsSL https://install.5dive.com | sudo bash
 
-# 2. create your first agent
+# 2. (optional) interactive wizard — signs you in, pairs Telegram, creates your first agent
+#     skip this if you prefer the explicit commands shown below
 5dive init
 ```
 
