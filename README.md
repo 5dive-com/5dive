@@ -214,9 +214,8 @@ Every command accepts `--json`. Output is `{ok:true,data:...}` on success or `{o
 
 ## Requirements
 
-- Linux (Ubuntu 22.04+ recommended)
-- `bash` 5+, `jq`, `tmux`, `systemd`
-- root for install
+- Linux with `systemd` (Ubuntu 22.04+ recommended)
+- root for install (installer apt-installs `jq`, `tmux`, and other deps)
 
 No systemd / no root / not Linux? Use the [Docker image](#other-paths).
 
