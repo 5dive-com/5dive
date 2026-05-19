@@ -177,7 +177,7 @@ docker exec -it 5dive-demo bash
 
 **Context rot** — long sessions degrade. Restart daily via cron:
 ```cron
-0 4 * * * curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | bash -s -- --upgrade && systemctl restart '5dive-agent@*.service'
+0 4 * * * curl -fsSL https://install.5dive.com | bash -s -- --upgrade && systemctl restart '5dive-agent@*.service'
 ```
 Claude-runtime agents keep project memory under `~/.claude/projects/<dir>/memory/` across restarts — session resets, knowledge stays.
 
