@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# StopFailure hook: relay failure info to Telegram; if it's a rate_limit,
-# auto-answer "1" (wait) to the blocking tmux prompt so the session stays
-# responsive to incoming Telegram messages once the limit resets.
+# StopFailure hook: relay failure info to Telegram. For rate-limit failures,
+# fork the resume-after-reset helper which owns the full recovery flow
+# (auto-press "1" on the menu, wait for reset, type "continue", ping). The
+# hook itself stays short — well under its 10s timeout — because all the
+# slow parts (menu polling, long wait) live in the detached helper.
 
 set -u
 payload=$(cat)
@@ -13,9 +15,9 @@ if printf '%s' "$payload" | grep -qi 'rate_limit\|usage.limit'; then
   is_rate_limit=true
 fi
 
-# Capture the rate-limit pane up front — used both for parsing the reset
-# time (the pane is the most reliable source: claude prints "resets 9am
-# (UTC)" verbatim) and later for the menu auto-press.
+# Capture the rate-limit pane up front — used for parsing the reset time.
+# The pane is the most reliable source: claude prints "resets 9am (UTC)"
+# verbatim.
 pane=""
 if [[ -n "${TMUX:-}" ]]; then
   pane=$(tmux capture-pane -p 2>/dev/null || true)
@@ -108,11 +110,15 @@ if [[ -n "$reset_epoch_num" ]]; then
   fi
 fi
 
+# Unified rate-limit text: same prefix in both branches, time tail only when
+# we parsed a reset epoch. Prior split ("The agent hit the usage limit —
+# waiting for it to reset" vs "Usage limit hit — resumes in 12m") read like
+# two different events; this collapses them.
 if $is_rate_limit; then
   if [[ -n "$time_left" ]]; then
     text="Usage limit hit — resumes in ${time_left}."
   else
-    text="The agent hit the usage limit — waiting for it to reset."
+    text="Usage limit hit — waiting for reset."
   fi
 else
   text="The agent stopped with an error: ${msg}"
@@ -128,50 +134,29 @@ for chat_id in $chat_ids; do
     -o /dev/null 2>/dev/null || true
 done
 
-if $is_rate_limit; then
-  # Hook runs as a subprocess of claude, which runs inside tmux — $TMUX is
-  # inherited, so tmux commands without -t target the current session. That
-  # makes this script agent-agnostic: same file serves `channel` and every
-  # `agent-<name>` session.
-  #
-  # Auto-press "1" on the /rate-limit-options menu. The menu line looks like
-  # "  ❯ 1. Stop and wait for limit to reset" — match the option label, not
-  # the leading position, since the cursor glyph (❯) sits before the "1.".
-  # Poll a few seconds because the menu can take a beat to render after the
-  # StopFailure hook fires.
-  attempt=0
-  pressed=false
-  while (( attempt < 20 )); do
-    pane=$(tmux capture-pane -p 2>/dev/null || true)
-    if printf '%s' "$pane" | grep -qiE '1\. Stop and wait'; then
-      tmux send-keys "1" Enter 2>/dev/null || true
-      pressed=true
-      break
+# Detach the recovery helper for rate-limit failures. The helper handles
+# menu polling, the wait, "continue" injection, and the resume ping — none
+# of which are bounded by the hook's 10s timeout. Skipped if we don't have
+# tmux context (can't press anything) or a reset epoch (don't know when to
+# resume).
+if $is_rate_limit && [[ -n "$reset_epoch_num" && -n "${TMUX:-}" ]]; then
+  tmux_socket=$(printf '%s' "$TMUX" | cut -d, -f1)
+  tmux_target=$(tmux display -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
+  chat_ids_csv=$(printf '%s\n' $chat_ids | paste -sd, -)
+  resume_helper="/usr/local/lib/5dive/resume-after-reset.sh"
+  if [[ -n "$tmux_target" && -x "$resume_helper" ]]; then
+    # Log dir: /var/lib/5dive/resume isn't writable by agent users
+    # (parent is mode 2750 root:claude). Fall back to ~/.cache/5dive/resume
+    # which the agent owns. /tmp as a last-ditch fallback.
+    log_dir="${HOME}/.cache/5dive/resume"
+    if ! mkdir -p "$log_dir" 2>/dev/null; then
+      log_dir="/tmp"
     fi
-    attempt=$((attempt + 1))
-    sleep 1
-  done
-
-  # Schedule a deferred auto-resume: at reset time, type "continue" + Enter
-  # into the same tmux pane and ping Telegram so the user knows the agent is
-  # back. Requires both a parsed reset epoch and a tmux target.
-  if $pressed && [[ -n "$reset_epoch_num" && -n "${TMUX:-}" ]]; then
-    tmux_socket=$(printf '%s' "$TMUX" | cut -d, -f1)
-    tmux_target=$(tmux display -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
-    chat_ids_csv=$(printf '%s\n' $chat_ids | paste -sd, -)
-    resume_helper="/usr/local/lib/5dive/resume-after-reset.sh"
-    if [[ -n "$tmux_target" && -x "$resume_helper" ]]; then
-      now=$(date +%s)
-      delay=$(( reset_epoch_num - now + 30 ))  # 30s buffer past reset
-      (( delay < 30 )) && delay=30
-      log_dir="/var/lib/5dive/resume"
-      mkdir -p "$log_dir" 2>/dev/null || log_dir="/tmp"
-      log_file="${log_dir}/$(date +%s)-$$.log"
-      TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}" \
-        setsid "$resume_helper" "$delay" "$tmux_socket" "$tmux_target" "$chat_ids_csv" \
-        >"$log_file" 2>&1 < /dev/null &
-      disown 2>/dev/null || true
-    fi
+    log_file="${log_dir}/resume-$(date +%s)-$$.log"
+    TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}" \
+      setsid "$resume_helper" "$reset_epoch_num" "$tmux_socket" "$tmux_target" "$chat_ids_csv" \
+      >"$log_file" 2>&1 < /dev/null &
+    disown 2>/dev/null || true
   fi
 fi
 

@@ -1,29 +1,76 @@
 #!/usr/bin/env bash
-# Spawned detached by stop-failure-telegram.sh after the rate-limit menu is
-# auto-dismissed. Sleeps until the usage limit resets, then types "continue"
-# into the originating tmux pane and pings the paired Telegram chats so the
-# user knows their agent is awake again.
+# Spawned detached by stop-failure-telegram.sh as soon as it detects a usage
+# limit. Owns the full rate-limit recovery flow:
 #
-# Args: <delay_seconds> <tmux_socket> <tmux_target> <chat_ids_csv>
+#   Phase 1 (auto-press): poll the tmux pane for claude's "1. Stop and wait"
+#     menu, send "1" + Enter when it appears. Polls up to ~60s — long enough
+#     for the menu to render in practice but bounded so a stuck pane doesn't
+#     hold the process forever. Skipped silently if the menu never appears
+#     (e.g. user pressed it themselves, or claude exited instead of parking).
+#
+#   Phase 2 (wait): sleep until reset_epoch + 30s buffer.
+#
+#   Phase 3 (resume): type "continue" + Enter into the originating tmux pane
+#     so claude picks up the conversation. If claude already exited, the
+#     keystrokes hit a shell — "continue" is a no-op there, harmless.
+#
+#   Phase 4 (ping): tell the paired Telegram chats the agent is back.
+#
+# Args: <reset_epoch> <tmux_socket> <tmux_target> <chat_ids_csv>
 # Env:  TELEGRAM_BOT_TOKEN (required for the notification)
+#
+# Why this lives outside the hook: the StopFailure hook has timeout=10s but
+# menu rendering can lag several seconds and the wait phase is up to 5h. The
+# hook spawns this script via setsid + & so it runs free of the hook timeout
+# and free of the agent's tmux session lifecycle.
 
 set -u
-delay="${1:-0}"
+reset_epoch="${1:-0}"
 socket="${2:-}"
 target="${3:-}"
 chat_ids_csv="${4:-}"
 
-if [[ "$delay" =~ ^[0-9]+$ ]] && (( delay > 0 )); then
+log() { printf '[%s] %s\n' "$(date -Is)" "$*"; }
+
+log "resume-after-reset start: reset_epoch=$reset_epoch socket=$socket target=$target"
+
+# Phase 1 — poll-and-press. Same regex as before (matches "1. Stop and wait"
+# anywhere in the pane, tolerant of the cursor glyph ❯). Up to 60 attempts at
+# 1s = 60s, generous enough for normal renders.
+pressed=false
+if [[ -n "$socket" && -n "$target" ]]; then
+  attempt=0
+  while (( attempt < 60 )); do
+    pane=$(tmux -S "$socket" capture-pane -t "$target" -p 2>/dev/null || true)
+    if printf '%s' "$pane" | grep -qiE '1\. Stop and wait'; then
+      tmux -S "$socket" send-keys -t "$target" "1" Enter 2>/dev/null || true
+      pressed=true
+      log "phase1 pressed '1' on attempt $attempt"
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  $pressed || log "phase1 menu never appeared after ${attempt}s — proceeding to wait anyway"
+fi
+
+# Phase 2 — sleep until reset + 30s buffer. Clamp to >=30s so a stale epoch
+# never makes us skip the wait entirely.
+now=$(date +%s)
+if [[ "$reset_epoch" =~ ^[0-9]+$ ]] && (( reset_epoch > 0 )); then
+  delay=$(( reset_epoch - now + 30 ))
+  (( delay < 30 )) && delay=30
+  log "phase2 sleeping ${delay}s until reset"
   sleep "$delay"
 fi
 
+# Phase 3 — resume claude. send-keys is a no-op if the pane has gone away.
 if [[ -n "$socket" && -n "$target" ]]; then
-  # If claude is still parked at "Stop and wait", typing "continue" + Enter
-  # wakes it. If it has already exited, the pane is at a shell — typing
-  # "continue" there is a no-op (command-not-found) which is harmless.
   tmux -S "$socket" send-keys -t "$target" "continue" Enter 2>/dev/null || true
+  log "phase3 sent 'continue' to $target"
 fi
 
+# Phase 4 — Telegram ping. Multiple chats supported (DM + group).
 if [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "$chat_ids_csv" ]]; then
   IFS=',' read -ra cids <<< "$chat_ids_csv"
   for cid in "${cids[@]}"; do
@@ -33,6 +80,7 @@ if [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "$chat_ids_csv" ]]; then
       --data-urlencode "text=Usage limit reset — agent resumed." \
       -o /dev/null 2>/dev/null || true
   done
+  log "phase4 telegram pings sent"
 fi
 
 exit 0
