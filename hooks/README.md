@@ -12,7 +12,8 @@ claude agent's only output channel is a Telegram chat.
 | `stop-telegram-reply-check.sh` | `Stop` | Catches the "got a Telegram message this turn, didn't call `mcp__plugin_telegram_telegram__reply`" slip — the agent thought it answered but only wrote to the transcript. Three branches: relay the transcript text to Telegram, block the Stop so the agent retries, or send a diagnostic. Loop-safe via three independent guards. |
 | `stop-failure-telegram.sh` | `StopFailure` | Relays failure details to the paired chat. On rate-limit specifically: auto-presses "1" (wait) on the blocking tmux prompt and spawns `resume-after-reset.sh` so the session wakes itself when the limit clears. |
 | `resume-after-reset.sh` | — (helper) | Not a hook — spawned detached by `stop-failure-telegram.sh`. Sleeps until the parsed reset epoch, sends `continue` + Enter to the original tmux pane, then pings Telegram so the user knows the agent is back. |
-| `mirror-agent-send.sh` | `PostToolUse` (matcher: `Bash`) | Mirrors outbound `5dive agent send|ask` traffic to a shared Telegram group when the agent's `access.json` lists a group/supergroup chat. Lets the human operator watch agent-to-agent conversations from one room. Silent when no group is present (DM-only agents). |
+| `userprompt-mirror-inter-agent.sh` | `UserPromptSubmit` | Receiver-side mirror: when an inbound `[5dive-msg from=X id=Y]` envelope lands in this agent's session, post the body to the shared Telegram group so the operator can watch agent-to-agent traffic. Replaces an earlier sender-side `PreToolUse` hook that couldn't see heredoc-built bodies. Silent when no group is configured. |
+| `stop-mirror-inter-agent.sh` | `Stop` | Receiver-side reply mirror: at end-of-turn, if the inbound was a `[5dive-msg]` envelope, post the agent's reply text to the same group. Pairs with `userprompt-mirror-inter-agent.sh` to put both halves of an inter-agent exchange in one room. |
 
 ## Lifecycle
 

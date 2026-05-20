@@ -3,11 +3,11 @@
 # message (5dive agent send|ask) into the shared Telegram group, so the
 # operator can read BOTH sides of agent-to-agent conversations in one room.
 #
-# Companion to mirror-agent-send.sh: that hook posts the OUTBOUND ask/send
-# when this agent initiates. This hook posts the REPLY when this agent is
-# the receiver. Together they make the group chat a complete transcript of
-# inter-agent traffic — without this hook the group sees A's question to B
-# but never B's answer.
+# Companion to userprompt-mirror-inter-agent.sh: that hook posts the
+# INBOUND [5dive-msg from=X] envelope when this agent receives a message.
+# This hook posts the REPLY at end-of-turn. Together they make the group
+# chat a complete transcript of inter-agent traffic — without this hook
+# the group sees A's question to B but never B's answer.
 #
 # Why Stop only (not PostToolUse): inter-agent replies are typically a
 # single end-of-turn text block. The mid-turn-relay companion that exists
@@ -20,7 +20,7 @@
 #   - Agent emitted no transcript text this turn (tool-only response)
 #
 # Truncation: MIRROR_REPLY_MAX_CHARS (default 800) trims the body and
-# appends a "+N chars" overflow indicator, matching mirror-agent-send.sh.
+# appends a "+N chars" overflow indicator, matching the inbound mirror.
 #
 # Wired in $HOME/.claude/settings.json by lib/agent_setup.sh's
 # preseed_claude_agent when channels=telegram. Token from TELEGRAM_BOT_TOKEN
@@ -118,11 +118,11 @@ else
   overflow=""
 fi
 
-# Sender label: prefer @bot_username so the mirror line threads visually
-# with mirror-agent-send.sh's outbound line (which mentions @receiver_bot).
-# Reads in the group as: agent_x_bot says "@y question", agent_y_bot says
-# "@x answer" — natural conversation flow. Fall back to bare name if the
-# 5dive registry lookup fails for any reason.
+# Sender label: prefer @bot_username so the reply mirror line threads
+# visually with userprompt-mirror-inter-agent.sh's inbound line (both
+# @-mention the same other-party bot). Reads in the group as: agent_x_bot
+# posts "@y question", agent_y_bot posts "@x answer" — natural conversation
+# flow. Fall back to bare name if the 5dive registry lookup fails.
 sender_label="$sender"
 sender_bot=$(sudo -n 5dive --json agent list 2>/dev/null \
   | jq -r --arg n "$sender" '

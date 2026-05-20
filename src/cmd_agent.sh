@@ -1964,10 +1964,11 @@ cmd_send() {
   fi
   # --raw + --from is contradictory: --raw means "no envelope, no metadata"
   # (for piping pre-formatted prompts), so claiming a sender identity has
-  # nowhere to land. Worse, the receiver-side stop-mirror-inter-agent.sh keys
-  # off the [5dive-msg from=X id=Y] envelope to detect inter-agent inbound; if
-  # --raw silently strips it while --from suggests "this is from me", the
-  # reply mirror skips with no warning and operators see half the conversation.
+  # nowhere to land. Worse, the receiver-side inbound/reply mirrors
+  # (userprompt-mirror-inter-agent.sh + stop-mirror-inter-agent.sh) key off
+  # the [5dive-msg from=X id=Y] envelope to detect inter-agent traffic; if
+  # --raw silently strips it while --from suggests "this is from me", both
+  # mirrors skip with no warning and operators see none of the conversation.
   # Force the caller to pick one: identify yourself (and accept the envelope)
   # or send raw (and accept anonymity).
   if (( raw && from_set )); then

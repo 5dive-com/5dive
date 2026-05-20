@@ -40,9 +40,13 @@ refresh_managed_files() {
   ok "systemd template installed"
 
   install -d -m 755 "$LIB_DIR" "$LIB_DIR/skills/notify-user"
+  # Remove the deprecated sender-side PreToolUse mirror: it read the
+  # pre-expansion command string, so it couldn't see heredoc bodies. The
+  # receiver-side userprompt-mirror-inter-agent.sh below replaces it.
+  rm -f "$LIB_DIR/mirror-agent-send.sh"
   for hook in stop-failure-telegram.sh resume-after-reset.sh \
               pretool-telegram-question.sh stop-telegram-reply-check.sh \
-              posttool-telegram-relay.sh mirror-agent-send.sh \
+              posttool-telegram-relay.sh userprompt-mirror-inter-agent.sh \
               stop-mirror-inter-agent.sh; do
     curl -fsSL "$REPO/hooks/$hook" -o "$LIB_DIR/$hook"
     chmod 755 "$LIB_DIR/$hook"
