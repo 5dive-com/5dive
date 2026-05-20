@@ -9,14 +9,95 @@ release.
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-05-20
+
 ### Added
 
-- README — split the "have your agent install it" section into two
-  copy-paste prompts: (a) same-machine install, (b) laptop-agent
-  installs onto a remote VM over SSH. Both end with the agent installing
-  the `5dive-cli` skill from `5dive-com/skills` via `npx skills add`, so
-  the user can keep managing 5dive (create/auth/pair) through the same
-  agent.
+- `5dive init` first-run wizard now includes a Telegram channel picker
+  with auto-discovery — the wizard probes the bot's recent updates and
+  offers detected chats as one-tap choices instead of asking the user
+  to paste a chat id.
+- `5dive agent send` / `5dive agent ask` accept `--reply-to-chat` and
+  `--reply-to-msg`, so an agent can thread its inter-agent message into
+  a specific Telegram conversation rather than picking the first paired
+  chat blindly.
+- `5dive telegram-pending-ignore` and `5dive telegram-resolve-handle` —
+  CLI shortcuts the dashboard and the channel pairing flow lean on.
+  `resolve-handle` accepts numeric chat ids and group titles in
+  addition to `@usernames`.
+- Default-on UI install: the local web dashboard install path is gone
+  from OSS (see "Changed" below), but the underlying `--no-ui` flag was
+  flipped to default-on for the install bits that remain.
+- Ship `projects-CLAUDE.md`: `install.sh` drops a slim project-level
+  `CLAUDE.md` at `/home/claude/projects/CLAUDE.md` (only if absent),
+  symlinked as `AGENTS.md`. Gives every newly-spawned agent baseline
+  guidance for switching its own model/effort, the Telegram reply
+  mandate for paired agents, and the inter-agent messaging primitives.
+- `hooks/README.md` documents the four (now six, after this release's
+  inter-agent mirror split) hook scripts and their failure modes.
+- README badges for CI status, latest release, and license.
+- README — split the "have your agent install it" section into a
+  same-machine prompt and a laptop-agent-installs-onto-remote-VM
+  prompt; both end with the agent installing the `5dive-cli` skill
+  so the user can keep managing 5dive through the same agent.
+- README — `codex → gemini` image-to-animation example.
+- README OG social-preview image.
+
+### Changed
+
+- Repo renamed `5dive-com/5dive-cli` → `5dive-com/5dive`. The
+  short-url installer (`curl install.5dive.com | sudo bash`) keeps
+  working unchanged; only direct `raw.githubusercontent.com` URLs in
+  third-party docs need updating.
+- Local web dashboard removed from OSS. The managed dashboard at
+  5dive.com continues to ship for cloud customers; self-hosted users
+  drive 5dive entirely from the CLI. Dropping the bundled Next.js app
+  cuts the install footprint and removes a long tail of port-conflict
+  / reverse-proxy questions.
+- `install.sh --upgrade --no-ui` tolerated as a deprecated no-op (was
+  previously rejected after the dashboard removal made the flag
+  meaningless).
+- README rewrite: tighter Quickstart, "Why 5dive" reframed around the
+  three isolation tiers (Docker / systemd-user / dedicated-VM), "How
+  it works" promoted above the fold, hero demo served via GitHub
+  assets / jsDelivr so the inline `<video>` gets the right mp4 mime.
+
+### Fixed
+
+- `5dive auth login claude` now captures the token from
+  `claude setup-token`'s TTY login flow (the upstream CLI started
+  printing to its own /dev/tty, bypassing the redirected stdout we
+  were grepping). Caught by `pair-test` against a fresh Hetzner box.
+- UI new-agent flow: full OAuth state machine + Discord token handling
+  + error recovery. The previous version assumed every OAuth attempt
+  succeeded on the first poll and got stuck on the loading spinner
+  when the upstream URL took two ticks to land.
+- `init` ASCII logo spelled out 5DIVE properly; opencode reframed as
+  BYO-provider (it ships with free models but the wizard implied you
+  had to sign in).
+- `src/header.sh` prepends `/usr/sbin` to PATH so `adduser`,
+  `usermod`, `userdel` always resolve — first-agent-create was failing
+  inside systemd-spawned shells where /usr/sbin wasn't on PATH.
+- Hooks reliability pass surfaced by live use:
+  - `stop-telegram-reply-check.sh` catches trailing assistant text
+    that lands after a successful telegram tool call (the agent
+    sometimes appends a sign-off the user never sees).
+  - Inter-agent mirror split: the old sender-side `PreToolUse` mirror
+    couldn't see heredoc-built command bodies. Replaced with a
+    receiver-side `UserPromptSubmit` hook
+    (`userprompt-mirror-inter-agent.sh`) plus a `Stop` reply mirror
+    (`stop-mirror-inter-agent.sh`).
+  - Rate-limit-resume text unified between the immediate ping and the
+    detached `resume-after-reset.sh`; the auto-press-1 helper moved
+    into the detached helper so it survives session teardown.
+  - `pretool-telegram-question.sh` typographic-quote bug fixed (the
+    template literal was getting smart-quoted somewhere in the
+    pipeline and the deny message rendered with U+201C/U+201D).
+  - Three follow-up fixes against the inter-agent mirror after first
+    live use against `agent-marketing`.
+
+[Unreleased]: https://github.com/5dive-com/5dive/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/5dive-com/5dive/releases/tag/v0.1.2
 
 ## [0.1.1] — 2026-05-16
 
@@ -90,6 +171,5 @@ First public release.
 - `bundle-drift` workflow — fails any push where the committed `5dive`
   bundle disagrees with `./build.sh` output from `src/`.
 
-[Unreleased]: https://github.com/5dive-com/5dive/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/5dive-com/5dive/releases/tag/v0.1.1
 [0.1.0]: https://github.com/5dive-com/5dive/releases/tag/v0.1.0

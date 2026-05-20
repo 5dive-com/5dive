@@ -55,6 +55,25 @@ refresh_managed_files() {
   curl -fsSL "$REPO/skills/notify-user/SKILL.md" -o "$LIB_DIR/skills/notify-user/SKILL.md"
   chmod 644 "$LIB_DIR/skills/notify-user/SKILL.md"
   ok "notify-user skill"
+
+  # Drop a slim projects-level CLAUDE.md so every agent spawned on this host
+  # picks up baseline self-management guidance (how to switch its own model,
+  # the Telegram reply mandate when paired, inter-agent messaging). Only on
+  # first install — never clobber a customised file. Symlink AGENTS.md so
+  # non-claude agent types (codex, gemini, …) see the same instructions.
+  install -d -m 755 -o claude -g claude /home/claude/projects
+  if [[ ! -f /home/claude/projects/CLAUDE.md ]]; then
+    curl -fsSL "$REPO/projects-CLAUDE.md" -o /home/claude/projects/CLAUDE.md
+    chown claude:claude /home/claude/projects/CLAUDE.md
+    chmod 644 /home/claude/projects/CLAUDE.md
+    ok "projects/CLAUDE.md"
+  else
+    ok "projects/CLAUDE.md (kept existing)"
+  fi
+  if [[ ! -e /home/claude/projects/AGENTS.md ]]; then
+    ln -sfn CLAUDE.md /home/claude/projects/AGENTS.md
+    chown -h claude:claude /home/claude/projects/AGENTS.md
+  fi
 }
 
 # --- Subcommand dispatch ---------------------------------------------------
