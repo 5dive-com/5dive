@@ -28,6 +28,12 @@ USERPROMPT_MIRROR_INTERAGENT_HOOK="/usr/local/lib/5dive/userprompt-mirror-inter-
 # agent-to-agent conversations in the operator's group chat.
 STOP_MIRROR_INTERAGENT_HOOK="/usr/local/lib/5dive/stop-mirror-inter-agent.sh"
 AGENT_SKILLS_DIR="/usr/local/lib/5dive/skills"
+# CLAUDE.md fragment dropped into the per-agent $HOME/.claude/ when the
+# agent is created with --channels=telegram. Carries the per-turn reply
+# mandate + AskUserQuestion/ExitPlanMode warning — guidance that only
+# applies to telegram-paired agents and used to live in the shared
+# projects-level CLAUDE.md, polluting every non-telegram agent's prompt.
+TELEGRAM_AGENT_CLAUDE_MD="/usr/local/lib/5dive/telegram-agent-CLAUDE.md"
 
 # Preseed a claude-family agent's home dir so:
 #   - 'claude --dangerously-skip-permissions' doesn't hit the first-run
@@ -138,6 +144,21 @@ JSON
     sudo -u "$user" mkdir -p "$home/.claude/skills/notify-user"
     sudo -u "$user" cp "$AGENT_SKILLS_DIR/notify-user/SKILL.md" \
       "$home/.claude/skills/notify-user/SKILL.md"
+  fi
+
+  # Telegram agents also get a per-agent CLAUDE.md fragment carrying the
+  # reply mandate + AskUserQuestion/ExitPlanMode warning. Lands at
+  # $HOME/.claude/CLAUDE.md — claude reads it on session start alongside
+  # the shared projects-level CLAUDE.md. Best-effort: warn (don't fail)
+  # if the installer hasn't placed the source file, since the agent boots
+  # fine without it.
+  if [[ "$channels" == "telegram" ]]; then
+    if [[ -f "$TELEGRAM_AGENT_CLAUDE_MD" ]]; then
+      sudo -u "$user" cp "$TELEGRAM_AGENT_CLAUDE_MD" "$home/.claude/CLAUDE.md"
+      chmod 644 "$home/.claude/CLAUDE.md"
+    else
+      warn "$TELEGRAM_AGENT_CLAUDE_MD missing — per-agent telegram CLAUDE.md not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
+    fi
   fi
 
   # Default skills, best-effort: if npx isn't reachable yet (cold box, no network)
