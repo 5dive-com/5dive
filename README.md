@@ -7,7 +7,7 @@
 
 spawn and manage AI agents that talk to each other.
 
-> MIT. The same binary that runs every agent on [5dive.com](https://5dive.com) — no open-core split. Skip the ops with the managed VM, or run your own.
+> MIT. The same binary that runs every agent on [5dive.com](https://5dive.com). No open-core split. Skip the ops with the managed VM, or run your own.
 
 ---
 
@@ -21,7 +21,7 @@ curl -fsSL https://install.5dive.com | sudo bash
 5dive init
 ```
 
-Talk to an agent from your phone — wire it to a Telegram bot ([BotFather](https://t.me/BotFather) gives you the token):
+Talk to an agent from your phone. Wire it to a Telegram bot ([BotFather](https://t.me/BotFather) gives you the token):
 
 ```sh
 5dive agent create my-agent --type=claude --channels=telegram --telegram-token=<token>
@@ -34,7 +34,7 @@ For scripted / CI setup, see `5dive init --help`.
 
 ## How it works
 
-Each agent is its own Linux user running an official agentic AI CLI (`claude`, `codex`, `gemini`, ...) as a systemd service. They reach each other by invoking the same `5dive` CLI — that *is* the bus. Channels like Telegram attach per agent.
+Each agent is its own Linux user running an official agentic AI CLI (`claude`, `codex`, `gemini`, ...) as a systemd service. They reach each other by invoking the same `5dive` CLI. That *is* the bus. Channels like Telegram attach per agent.
 
 ```text
             one host
@@ -59,17 +59,17 @@ No broker, no protocol, no orchestrator. Shared filesystem, shared CLI.
 
 **Runs as a service, not a session.** Your agents stay alive when you close the terminal. Message them from Telegram any time.
 
-**Every major agentic AI CLI.** `claude`, `codex`, `gemini`, `hermes`, `openclaw`, `opencode` — under one team.
+**Every major agentic AI CLI.** `claude`, `codex`, `gemini`, `hermes`, `openclaw`, `opencode`, all under one team.
 
-**A subscription that's yours.** Official `claude` CLI on your own Pro/Max — no middleman, no OAuth proxy, Anthropic-policy safe.
+**A subscription that's yours.** Official `claude` CLI on your own Pro/Max. No middleman, no OAuth proxy, Anthropic-policy safe.
 
-**Safe by default.** Each agent is its own Linux user under one of three isolation tiers — sandbox an agent and it can't read your home dir or sudo your box.
+**Safe by default.** Each agent is its own Linux user under one of three isolation tiers. Sandbox an agent and it can't read your home dir or sudo your box.
 
 ---
 
 ## Want a dashboard?
 
-The CLI is the OSS surface — every verb here, every agent, every host, all driven from `/usr/local/bin/5dive`.
+The CLI is the OSS surface. Every verb here, every agent, every host, all driven from `/usr/local/bin/5dive`.
 
 If you'd rather click than `ssh`, [5dive.com](https://5dive.com) is the managed version: same CLI under the hood, but the VM, hardening, backups, and dashboard are run for you.
 
@@ -88,7 +88,7 @@ If you'd rather click than `ssh`, [5dive.com](https://5dive.com) is the managed 
 | `openclaw` | third-party multi-provider harness | OAuth (OpenAI) / API key | Telegram, Discord |
 | `opencode` | OpenCode | API key | — |
 
-`hermes` and `openclaw` are community-built harnesses that can route to many providers (OpenRouter, Anthropic, Google, Moonshot, etc.). As of April 4, 2026, Anthropic and Google no longer permit routing consumer subscription OAuth (Claude Pro/Max, Gemini) through third-party harnesses — for that work, use the official `claude` or `gemini` types with your own API key. Background: [We Ditched OpenClaw for Claude →](https://blog.5dive.com/blog/we-ditched-openclaw-for-claude/).
+`hermes` and `openclaw` are community-built harnesses that can route to many providers (OpenRouter, Anthropic, Google, Moonshot, etc.). As of April 4, 2026, Anthropic and Google no longer permit routing consumer subscription OAuth (Claude Pro/Max, Gemini) through third-party harnesses. For that work, use the official `claude` or `gemini` types with your own API key. Background: [We Ditched OpenClaw for Claude →](https://blog.5dive.com/blog/we-ditched-openclaw-for-claude/).
 
 ---
 
@@ -144,7 +144,7 @@ Rename or rotate the account, every bound agent rebinds automatically.
 
 ## No middlemen
 
-5dive runs on your server. Auth tokens go to model providers directly — never to us. No telemetry, no error reporting, no usage data leaves the box. Each agent is one Linux user with its own login.
+5dive runs on your server. Auth tokens go to model providers directly, never to us. No telemetry, no error reporting, no usage data leaves the box. Each agent is one Linux user with its own login.
 
 Long form: [your auth tokens don't touch us →](https://blog.5dive.com/blog/your-auth-tokens-dont-touch-us/).
 
@@ -160,40 +160,40 @@ Long form: [your auth tokens don't touch us →](https://blog.5dive.com/blog/you
 - per-agent isolation tiers
 - Telegram bot allowlists
 
-Baselines: [devsec.os_hardening](https://github.com/dev-sec/ansible-collection-hardening) · [Lynis](https://github.com/CISOfy/lynis) · [fail2ban](https://www.fail2ban.org/). Or skip the checklist — [5dive.com](https://5dive.com) handles it.
+Baselines: [devsec.os_hardening](https://github.com/dev-sec/ansible-collection-hardening) · [Lynis](https://github.com/CISOfy/lynis) · [fail2ban](https://www.fail2ban.org/). Or skip the checklist; [5dive.com](https://5dive.com) handles it.
 
 ---
 
 ## Other paths
 
-**[Docker](docker/README.md)** — kick the tires without a host install:
+**[Docker](docker/README.md).** Kick the tires without a host install:
 ```sh
 docker build -f docker/Dockerfile -t 5dive .
 docker run -d --name 5dive-demo --privileged 5dive
 docker exec -it 5dive-demo bash
 ```
 
-**Offline / air-gapped** — `install.sh` reads from `$REPO` (default GitHub raw). Override with `REPO=file:///path/to/local/tree` and pre-install apt deps. The fetched files are listed at the top of `install.sh`.
+**Offline / air-gapped.** `install.sh` reads from `$REPO` (default GitHub raw). Override with `REPO=file:///path/to/local/tree` and pre-install apt deps. The fetched files are listed at the top of `install.sh`.
 
-**Context rot** — long sessions degrade. Restart daily via cron:
+**Context rot.** Long sessions degrade. Restart daily via cron:
 ```cron
 0 4 * * * curl -fsSL https://install.5dive.com | bash -s -- --upgrade && systemctl restart '5dive-agent@*.service'
 ```
-Claude-runtime agents keep project memory under `~/.claude/projects/<dir>/memory/` across restarts — session resets, knowledge stays.
+Claude-runtime agents keep project memory under `~/.claude/projects/<dir>/memory/` across restarts. Session resets, knowledge stays.
 
 ---
 
 ## For your AI agent
 
-If you already use Claude Code / Codex / Gemini / opencode, paste this prompt — your agent installs 5dive, learns the skill, then keeps managing agents through chat:
+If you already use Claude Code / Codex / Gemini / opencode, paste this prompt. Your agent installs 5dive, learns the skill, then keeps managing agents through chat:
 
 ```
 Install 5dive on this Linux host so I can use you to manage 5dive agents.
 
-1. Run the installer (idempotent — safe to rerun):
+1. Run the installer (idempotent, safe to rerun):
    curl -fsSL https://install.5dive.com | sudo bash
 2. Confirm: `5dive --version` prints "5dive 0.1.x".
-3. Install the 5dive-cli skill — replace <runtime> with one of
+3. Install the 5dive-cli skill. Replace <runtime> with one of
    claude-code, codex, gemini-cli, hermes-agent, openclaw, opencode:
    npx -y skills add https://github.com/5dive-com/skills --skill 5dive-cli --agent <runtime> --yes
 4. Tell me to restart so the skill loads, then ask which agent to create first.
@@ -229,10 +229,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). The `5dive` bundle at the repo root is b
 
 ## Reporting a vulnerability
 
-Use GitHub's private reporting: **[Report a vulnerability →](https://github.com/5dive-com/5dive/security/advisories/new)** — don't open a public issue. We acknowledge within 3 business days. Scope is the `5dive` CLI, `install.sh`, shipped systemd units, and `5dive-com/*` workflows; upstream coding CLIs (`claude`, `codex`, ...) and apt/Node go to their respective maintainers.
+Use GitHub's private reporting: **[Report a vulnerability →](https://github.com/5dive-com/5dive/security/advisories/new)**. Don't open a public issue. We acknowledge within 3 business days. Scope is the `5dive` CLI, `install.sh`, shipped systemd units, and `5dive-com/*` workflows; upstream coding CLIs (`claude`, `codex`, ...) and apt/Node go to their respective maintainers.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
