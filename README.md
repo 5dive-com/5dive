@@ -227,6 +227,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). The `5dive` bundle at the repo root is b
 
 ---
 
+## Reporting a vulnerability
+
+Use GitHub's private reporting: **[Report a vulnerability →](https://github.com/5dive-com/5dive/security/advisories/new)** — don't open a public issue. We acknowledge within 3 business days. Scope is the `5dive` CLI, `install.sh`, shipped systemd units, and `5dive-com/*` workflows; upstream coding CLIs (`claude`, `codex`, ...) and apt/Node go to their respective maintainers.
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

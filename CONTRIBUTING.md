@@ -102,7 +102,8 @@ caught.
 
 ## Reporting bugs / requesting features
 
-Open a GitHub issue. For security issues, see [SECURITY.md](SECURITY.md) —
+Open a GitHub issue. For security issues, use [GitHub's private vulnerability
+reporting](https://github.com/5dive-com/5dive/security/advisories/new) —
 **do not** open a public issue for a vulnerability.
 
 ## License
