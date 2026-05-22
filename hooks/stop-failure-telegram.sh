@@ -134,8 +134,33 @@ else
   fi
 fi
 
-access_file="${HOME}/.claude/channels/telegram/access.json"
-chat_ids=$(jq -r '(.allowFrom // []) + ((.groups // {}) | keys) | .[]' "$access_file" 2>/dev/null)
+# Caller-only narrowing: when an agent is paired with multiple chats (DM +
+# group), the original "ping everyone in access.json" approach made an
+# unrelated group buzz every time a single user's session hit the limit.
+# Scan the transcript for the most-recent telegram <channel> inbound and
+# ping only that chat. Fall back to all paired chat_ids if there's no
+# inbound (autonomous task — silencing would lose visibility entirely).
+# Same narrowed CSV is passed to resume-after-reset.sh below, so the
+# "agent resumed" follow-up also stays scoped to the caller.
+caller_chat_id=""
+transcript_path=$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null)
+if [[ -n "$transcript_path" && -r "$transcript_path" ]]; then
+  caller_chat_id=$(jq -rs '
+    [ .[]
+      | select(.type == "user")
+      | (.message.content | tostring)
+      | scan("source=\"plugin:telegram:telegram\" chat_id=\"([0-9]+)\"")
+      | .[0]
+    ] | last // ""
+  ' "$transcript_path" 2>/dev/null)
+fi
+
+if [[ -n "$caller_chat_id" ]]; then
+  chat_ids="$caller_chat_id"
+else
+  access_file="${HOME}/.claude/channels/telegram/access.json"
+  chat_ids=$(jq -r '(.allowFrom // []) + ((.groups // {}) | keys) | .[]' "$access_file" 2>/dev/null)
+fi
 
 for chat_id in $chat_ids; do
   curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
