@@ -122,6 +122,16 @@ if $is_rate_limit; then
   fi
 else
   text="The agent stopped with an error: ${msg}"
+  # The StopFailure payload only carries the high-level reason
+  # ("server_error"); the actual status line — "API Error: 529 Overloaded"
+  # — lives only in claude's pane output. Pull it out of the pane capture
+  # we already grabbed above so the Telegram alert names the failure.
+  if [[ -n "$pane" ]]; then
+    api_err=$(printf '%s' "$pane" | grep -oE 'API Error:[[:space:]]+[0-9]+[^.[:cntrl:]]*' | tail -1)
+    if [[ -n "$api_err" ]]; then
+      text+=$'\n'"${api_err}"
+    fi
+  fi
 fi
 
 access_file="${HOME}/.claude/channels/telegram/access.json"
