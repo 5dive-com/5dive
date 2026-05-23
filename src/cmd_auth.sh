@@ -267,7 +267,7 @@ profile_type_auth_path() {
     # openclaw/antigravity/grok use HOME redirect so the credential lives
     # at the same relative path each tool would write under a real $HOME.
     openclaw)    echo "${dir}/.openclaw/agents/main/agent/auth-profiles.json" ;;
-    antigravity) echo "${dir}/.gemini/antigravity-cli/credentials.json" ;;
+    antigravity) echo "${dir}/.gemini/antigravity-cli/antigravity-oauth-token" ;;
     grok)        echo "${dir}/.grok/auth.json" ;;
     # claude detection in cmd_auth_poll is log-grep-based, not file-mtime —
     # this entry is here for completeness/symmetry.
@@ -1114,9 +1114,10 @@ cmd_auth_poll() {
             #   openclaw    — ~/.openclaw/agents/main/agent/auth-profiles.json
             #                 (CLI polls OpenAI itself, then upsertAuthProfile
             #                 writes the file synchronously before exit)
-            #   antigravity — ~/.gemini/antigravity-cli/credentials.json
+            #   antigravity — ~/.gemini/antigravity-cli/antigravity-oauth-token
             #                 (Google OAuth callback or pasted code; mtime
-            #                 bumps once token_storage's file fallback writes)
+            #                 bumps once token_storage's file fallback writes
+            #                 the bare token blob, mode 0600)
             #   grok        — ~/.grok/auth.json
             #                 (CLI polls xAI's device-auth endpoint, writes
             #                 auth.json on token receipt)

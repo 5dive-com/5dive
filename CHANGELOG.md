@@ -9,6 +9,16 @@ release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `antigravity` auth sentinel path. The scaffold's first ship guessed
+  `~/.gemini/antigravity-cli/credentials.json` but agy 1.0.1 actually
+  writes the token blob at `~/.gemini/antigravity-cli/antigravity-oauth-token`
+  (no `.json` extension). The cmd_auth_poll mtime-check never noticed the
+  successful OAuth landing and reported `error: antigravity exited without
+  writing ...`. Confirmed empirically via the live-VM pair-test. Patches
+  TYPE_AUTH + profile_type_auth_path + the comment block in cmd_auth_poll.
+
 ### Added
 
 - `grok` agent type. xAI's CLI. Binary lands at `~/.local/bin/grok`

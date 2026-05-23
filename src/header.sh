@@ -137,10 +137,13 @@ declare -A TYPE_AUTH=(
   [hermes]="/home/claude/.hermes/auth.json"
   [openclaw]="/home/claude/.openclaw/agents/main/agent/auth-profiles.json"
   # antigravity tries the OS keyring first (via DBus secret-service) and
-  # falls back to a file under ~/.gemini/antigravity-cli/. Agent users run
-  # without DBus, so the file path is what we sentinel-check. Exact name
-  # confirmed once the OAuth round-trip lands (post-lodar test).
-  [antigravity]="/home/claude/.gemini/antigravity-cli/credentials.json"
+  # falls back to a file at ~/.gemini/antigravity-cli/antigravity-oauth-token
+  # (mode 0600). Verified empirically against agy 1.0.1: after the device-
+  # code flow completes (user pastes the Google OAuth callback code), the
+  # binary writes the token-blob file with this exact name — no .json
+  # extension, just the bare filename. Agent users run without a DBus
+  # session, so the file path is always the live sentinel.
+  [antigravity]="/home/claude/.gemini/antigravity-cli/antigravity-oauth-token"
   # grok writes ~/.grok/auth.json on successful `grok login --device-auth`.
   # Verified empirically — auth.json.lock pre-exists the actual auth.json
   # file (created on first device-auth attempt for the locking mechanism).

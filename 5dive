@@ -137,10 +137,13 @@ declare -A TYPE_AUTH=(
   [hermes]="/home/claude/.hermes/auth.json"
   [openclaw]="/home/claude/.openclaw/agents/main/agent/auth-profiles.json"
   # antigravity tries the OS keyring first (via DBus secret-service) and
-  # falls back to a file under ~/.gemini/antigravity-cli/. Agent users run
-  # without DBus, so the file path is what we sentinel-check. Exact name
-  # confirmed once the OAuth round-trip lands (post-lodar test).
-  [antigravity]="/home/claude/.gemini/antigravity-cli/credentials.json"
+  # falls back to a file at ~/.gemini/antigravity-cli/antigravity-oauth-token
+  # (mode 0600). Verified empirically against agy 1.0.1: after the device-
+  # code flow completes (user pastes the Google OAuth callback code), the
+  # binary writes the token-blob file with this exact name — no .json
+  # extension, just the bare filename. Agent users run without a DBus
+  # session, so the file path is always the live sentinel.
+  [antigravity]="/home/claude/.gemini/antigravity-cli/antigravity-oauth-token"
   # grok writes ~/.grok/auth.json on successful `grok login --device-auth`.
   # Verified empirically — auth.json.lock pre-exists the actual auth.json
   # file (created on first device-auth attempt for the locking mechanism).
@@ -1544,7 +1547,7 @@ profile_type_auth_path() {
     # openclaw/antigravity/grok use HOME redirect so the credential lives
     # at the same relative path each tool would write under a real $HOME.
     openclaw)    echo "${dir}/.openclaw/agents/main/agent/auth-profiles.json" ;;
-    antigravity) echo "${dir}/.gemini/antigravity-cli/credentials.json" ;;
+    antigravity) echo "${dir}/.gemini/antigravity-cli/antigravity-oauth-token" ;;
     grok)        echo "${dir}/.grok/auth.json" ;;
     # claude detection in cmd_auth_poll is log-grep-based, not file-mtime —
     # this entry is here for completeness/symmetry.
@@ -2391,9 +2394,10 @@ cmd_auth_poll() {
             #   openclaw    — ~/.openclaw/agents/main/agent/auth-profiles.json
             #                 (CLI polls OpenAI itself, then upsertAuthProfile
             #                 writes the file synchronously before exit)
-            #   antigravity — ~/.gemini/antigravity-cli/credentials.json
+            #   antigravity — ~/.gemini/antigravity-cli/antigravity-oauth-token
             #                 (Google OAuth callback or pasted code; mtime
-            #                 bumps once token_storage's file fallback writes)
+            #                 bumps once token_storage's file fallback writes
+            #                 the bare token blob, mode 0600)
             #   grok        — ~/.grok/auth.json
             #                 (CLI polls xAI's device-auth endpoint, writes
             #                 auth.json on token receipt)
