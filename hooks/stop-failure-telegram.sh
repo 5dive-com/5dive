@@ -18,8 +18,16 @@ fi
 # Capture the rate-limit pane up front — used for parsing the reset time.
 # The pane is the most reliable source: claude prints "resets 9am (UTC)"
 # verbatim.
+#
+# Race: on rate-limit failures, claude fires the Stop event before its
+# rate-limit notice ("You've hit your session limit · resets Xpm (TZ)")
+# is rendered to the pane. If we capture immediately, the line isn't
+# there yet, parsing returns empty, and the resume helper never forks.
+# Sleep briefly to let the render settle. The hook's timeout is 10s so
+# half a second of latency is well within budget.
 pane=""
 if [[ -n "${TMUX:-}" ]]; then
+  $is_rate_limit && sleep 0.5
   pane=$(tmux capture-pane -p 2>/dev/null || true)
 fi
 
