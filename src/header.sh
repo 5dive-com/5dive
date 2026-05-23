@@ -26,7 +26,7 @@ esac
 
 # Bumped on every public release. `build.sh` checks this line exists; CI fails
 # the bundle-drift check if it's missing or empty.
-readonly FIVE_VERSION="0.1.4"
+readonly FIVE_VERSION="0.1.5"
 
 STATE_DIR="/var/lib/5dive"
 REGISTRY="${STATE_DIR}/agents.json"
@@ -84,6 +84,12 @@ declare -A TYPE_BIN=(
   [hermes]="/home/claude/.local/bin/hermes"
   [openclaw]="/home/claude/.local/bin/openclaw"
   [opencode]="/home/claude/.local/bin/opencode"
+  # antigravity is Google's native-Go successor to gemini-cli. The installer
+  # lands it at ~/.local/bin/agy. State dir is ~/.gemini/antigravity-cli/
+  # (the binary identifies as product=antigravity but reuses Google's
+  # ~/.gemini parent — see launch log in the antigravity scaffold landed
+  # in 5dive@<post-removal>).
+  [antigravity]="/home/claude/.local/bin/agy"
 )
 # Which types accept --channels=telegram|discord. Each type wires the channel
 # differently (see install_channel_for_<type>_agent below):
@@ -103,6 +109,7 @@ declare -A TYPE_CHANNELS=(
   [hermes]=1
   [codex]=0
   [opencode]=0
+  [antigravity]=0
 )
 # Auth sentinel per type. Agent users run as agent-<name> (in group `claude`)
 # and cannot read /home/claude/.claude/settings.json (mode 0600), so for
@@ -124,6 +131,11 @@ declare -A TYPE_AUTH=(
   # under the default agent id "main" (resolved by openclaw's resolveAgentDir).
   [hermes]="/home/claude/.hermes/auth.json"
   [openclaw]="/home/claude/.openclaw/agents/main/agent/auth-profiles.json"
+  # antigravity tries the OS keyring first (via DBus secret-service) and
+  # falls back to a file under ~/.gemini/antigravity-cli/. Agent users run
+  # without DBus, so the file path is what we sentinel-check. Exact name
+  # confirmed once the OAuth round-trip lands (post-lodar test).
+  [antigravity]="/home/claude/.gemini/antigravity-cli/credentials.json"
 )
 # Installer recipe per type. Run as `claude` user via `sudo -u claude -i bash -lc <recipe>`
 # so $HOME/.nvm and PATH resolve correctly. Empty string => no automated installer
@@ -152,6 +164,10 @@ declare -A TYPE_INSTALL=(
   # the live perms of /home/claude/.opencode and .local/share/claude.
   [hermes]="[[ -x /home/claude/.local/bin/hermes ]] || { curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup && chmod 0775 /home/claude/.hermes; }"
   [openclaw]="[[ -x /home/claude/.local/bin/openclaw ]] || { curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard && mkdir -p /home/claude/.local/bin && ln -sf \"\$(npm prefix -g)/bin/openclaw\" /home/claude/.local/bin/openclaw; }"
+  # antigravity's installer drops the native-Go binary at ~/.local/bin/agy
+  # and self-updates in the background on each run, so no daily-cron
+  # equivalent of @google/gemini-cli's npm update is needed.
+  [antigravity]="command -v agy >/dev/null || curl -fsSL https://antigravity.google/cli/install.sh | bash"
 )
 
 # vercel-labs/skills CLI agent ID per 5dive type. `npx skills add --agent <id>`
@@ -164,6 +180,10 @@ declare -A SKILLS_AGENT_ID=(
   [hermes]=hermes-agent
   [openclaw]=openclaw
   [opencode]=opencode
+  # No published `npx skills --agent antigravity` registry entry; pass
+  # through so the skills CLI lands SKILL.md at the generic ./skills/<id>
+  # path (same fallback as openclaw).
+  [antigravity]=antigravity
 )
 # Where the skills CLI lands SKILL.md inside the agent user's $HOME, per type.
 # Used for post-install verification, the cmd_skill_list dir-scan fallback,
@@ -176,6 +196,7 @@ declare -A SKILLS_INSTALL_DIR=(
   [hermes]=".hermes/skills"
   [openclaw]="skills"
   [opencode]=".agents/skills"
+  [antigravity]=".gemini/antigravity-cli/skills"
 )
 
 # api-key target per type: the env file (in /etc/5dive/connectors for the
@@ -310,4 +331,8 @@ declare -A TYPE_PROBE=(
   [openclaw]=''
   [codex]=''
   [opencode]=''
+  # `agy --print ping` triggers a 30s OAuth wait when not authed and can't
+  # tell stale-creds from rate-limit from a healthy box. File-presence is
+  # the cheaper signal — fall through to TYPE_AUTH's sentinel.
+  [antigravity]=''
 )

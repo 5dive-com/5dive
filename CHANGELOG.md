@@ -9,6 +9,19 @@ release.
 
 ## [Unreleased]
 
+### Added
+
+- `antigravity` agent type. Google's native-Go successor to gemini-cli.
+  Installer lands `agy` at `~/.local/bin/agy` (no Node/nvm dependency).
+  Run flag: `--dangerously-skip-permissions` (mirrors the claude family
+  default). OAuth uses Google's consumer flow with redirect to
+  `antigravity.google/oauth-callback` — UX is identical to the deleted
+  gemini flow (URL displayed, waits 30s for either an OAuth callback OR
+  a pasted authorization code). Wired into the device-code flow alongside
+  claude/codex/hermes/openclaw. State dir is `~/.gemini/antigravity-cli/`
+  — the binary identifies as `product=antigravity` but reuses Google's
+  `~/.gemini` parent directory.
+
 ### Removed
 
 - `gemini` agent type. Google's Gemini CLI is being sunsetted by Google in

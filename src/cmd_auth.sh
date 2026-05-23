@@ -243,8 +243,9 @@ profile_type_env() {
     codex)             printf 'CODEX_HOME=%s' "$dir" ;;
     hermes)            printf 'HERMES_HOME=%s' "$dir" ;;
     # openclaw's resolveStateDir uses $HOME/.openclaw. HOME redirect is the
-    # only handle.
-    openclaw)          printf 'HOME=%s' "$dir" ;;
+    # only handle. antigravity is the same shape — it writes everything
+    # under $HOME/.gemini/antigravity-cli/, no GEMINI_HOME equivalent.
+    openclaw|antigravity) printf 'HOME=%s' "$dir" ;;
     *) return 1 ;;
   esac
 }
@@ -263,9 +264,10 @@ profile_type_auth_path() {
   case "$type" in
     codex)    echo "${dir}/auth.json" ;;
     hermes)   echo "${dir}/auth.json" ;;
-    # openclaw uses HOME redirect so the credential lives at the same
-    # relative path the tool would write under a real $HOME.
-    openclaw) echo "${dir}/.openclaw/agents/main/agent/auth-profiles.json" ;;
+    # openclaw/antigravity use HOME redirect so the credential lives at the
+    # same relative path each tool would write under a real $HOME.
+    openclaw)    echo "${dir}/.openclaw/agents/main/agent/auth-profiles.json" ;;
+    antigravity) echo "${dir}/.gemini/antigravity-cli/credentials.json" ;;
     # claude detection in cmd_auth_poll is log-grep-based, not file-mtime —
     # this entry is here for completeness/symmetry.
     claude)   echo "${dir}/.credentials.json" ;;
@@ -694,6 +696,12 @@ cmd_auth_login() {
     codex)
       # CODEX_HOME (when profiled) overrides /etc/profile.d's default.
       exec sudo -u claude -i env $extra_env bash -lc 'codex login' ;;
+    antigravity)
+      # agy has no `auth login` subcommand — OAuth fires automatically the
+      # first time the binary needs a token. `--print ping` is a minimal
+      # one-shot that triggers it; the binary prints the Google OAuth URL,
+      # then waits 30s for either an OAuth callback OR a pasted code.
+      exec sudo -u claude -i env $extra_env bash -lc 'agy --print ping' ;;
     opencode) exec sudo -u claude -i bash -lc 'opencode auth login' ;;
   esac
 }
@@ -784,6 +792,19 @@ extract_claude_token() {
     | tail -1 | sed 's/Store$//'
 }
 
+# antigravity prints `Authentication required. Please visit the URL to log in:`
+# followed by a Google OAuth URL with redirect_uri=antigravity.google/oauth-
+# callback on a single (possibly wrapped) line, then a "Or, paste the
+# authorization code here and press Enter" prompt. The URL anchor is the
+# accounts.google.com prefix; we accept both /o/oauth2/auth and /o/oauth2/v2/auth.
+extract_antigravity_url() {
+  local log="$1"
+  [[ -s "$log" ]] || return 1
+  sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\r//g' "$log" \
+    | grep -oE 'https://accounts\.google\.com/o/oauth2/(v2/)?auth\?[A-Za-z0-9._~:/?#=&%+_-]{40,2000}' \
+    | head -1
+}
+
 # codex login --device-auth prints a static device URL plus a one-time code
 # like `06LC-O1CRK`. Both are wrapped in CSI color escapes, so strip those
 # first. The URL is currently hard-coded but we still parse it so a future
@@ -819,8 +840,8 @@ cmd_auth_start() {
   [[ -n "$type" ]] || fail "$E_USAGE" "usage: 5dive agent auth start <type> [--auth-profile=<name>]"
   is_known_type "$type" || fail "$E_NOT_FOUND" "unknown type: $type"
   case "$type" in
-    claude|hermes|openclaw|codex) ;;
-    *) fail "$E_VALIDATION" "device-code flow supports claude/hermes/openclaw/codex. Use 'auth set --api-key' or 'auth login' for $type." ;;
+    claude|hermes|openclaw|codex|antigravity) ;;
+    *) fail "$E_VALIDATION" "device-code flow supports claude/hermes/openclaw/codex/antigravity. Use 'auth set --api-key' or 'auth login' for $type." ;;
   esac
   local bin="${TYPE_BIN[$type]}"
   [[ -x "$bin" ]] || fail "$E_NOT_INSTALLED" "$type not installed at $bin"
@@ -855,7 +876,7 @@ cmd_auth_start() {
   # not the shared /home/claude/.<type>.
   local auth_baseline=0
   case "$type" in
-    codex|hermes|openclaw)
+    codex|hermes|openclaw|antigravity)
       local sentinel
       sentinel=$(profile_type_auth_path "$profile" "$type")
       if [[ -n "$sentinel" && -f "$sentinel" ]]; then
@@ -902,6 +923,14 @@ cmd_auth_start() {
   local login_cmd preseed=""
   case "$type" in
     codex)  login_cmd="$bin login --device-auth" ;;
+    antigravity)
+      # `agy --print ping` is the minimal command that exercises the auth
+      # path: the binary attempts silent auth from keyring/file, fails on
+      # a fresh agent user (no DBus session), prints the Google OAuth URL,
+      # and waits 30s for either an OAuth callback poll or a pasted code.
+      # Same UX shape as gemini was; the URL pattern is identical except
+      # for the redirect_uri (antigravity.google/oauth-callback).
+      login_cmd="$bin --print ping" ;;
     hermes)
       # hermes auth add openai-codex prints a URL + one-time code (codex-style
       # device-auth via OpenAI), polls itself, then writes ~/.hermes/auth.json
@@ -999,6 +1028,18 @@ cmd_auth_poll() {
                  > "${meta}.tmp" && mv "${meta}.tmp" "$meta"
             fi
             ;;
+          antigravity)
+            # agy prints just the Google OAuth URL and waits for either a
+            # callback poll or a pasted code (same UX as gemini was).
+            local url
+            url=$(extract_antigravity_url "$log" || true)
+            if [[ -n "$url" ]]; then
+              state="awaiting_code"
+              jq --arg u "$url" --arg s "$state" --arg ts "$(date -Iseconds)" \
+                '.url = $u | .state = $s | .updatedAt = $ts' "$meta" > "${meta}.tmp" \
+                && mv "${meta}.tmp" "$meta"
+            fi
+            ;;
           *)
             local url
             url=$(extract_claude_url "$log" || true)
@@ -1014,13 +1055,16 @@ cmd_auth_poll() {
 
       if [[ "$state" == "awaiting_code" || "$state" == "submitted" ]]; then
         case "$type" in
-          codex|hermes|openclaw)
-            # All three signal success by writing a credential file:
-            #   codex    — ~/.codex/auth.json     (CLI polls OpenAI itself)
-            #   hermes   — ~/.hermes/auth.json    (CLI polls OpenAI itself)
-            #   openclaw — ~/.openclaw/agents/main/agent/auth-profiles.json
-            #              (CLI polls OpenAI itself, then upsertAuthProfile
-            #              writes the file synchronously before exit)
+          codex|hermes|openclaw|antigravity)
+            # All four signal success by writing a credential file:
+            #   codex       — ~/.codex/auth.json     (CLI polls OpenAI itself)
+            #   hermes      — ~/.hermes/auth.json    (CLI polls OpenAI itself)
+            #   openclaw    — ~/.openclaw/agents/main/agent/auth-profiles.json
+            #                 (CLI polls OpenAI itself, then upsertAuthProfile
+            #                 writes the file synchronously before exit)
+            #   antigravity — ~/.gemini/antigravity-cli/credentials.json
+            #                 (Google OAuth callback or pasted code; mtime
+            #                 bumps once token_storage's file fallback writes)
             # When this session is profile-scoped, the credential lands under
             # the per-profile state dir (profile_type_auth_path) instead of
             # the shared ~/.<type>. We mtime the sentinel against the
@@ -1126,7 +1170,9 @@ cmd_auth_submit() {
   type=$(jq -r '.type' "$meta")
   # codex and hermes never ask for a pasted callback — the CLI polls the
   # OAuth endpoint on its own and writes auth.json. Submitting here would
-  # wedge keystrokes into a prompt that doesn't exist.
+  # wedge keystrokes into a prompt that doesn't exist. antigravity DOES
+  # accept a pasted code at its "Or, paste the authorization code here"
+  # prompt, so the submit step IS valid for it.
   case "$type" in
     codex|hermes) fail "$E_VALIDATION" "$type device-auth has no submit step — keep polling until state=ok or state=error" ;;
   esac
