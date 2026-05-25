@@ -9,6 +9,46 @@ release.
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-05-24
+
+### Changed
+
+- New `telegram` agents now preseed on the `telegram@5dive-plugins` fork
+  instead of upstream `claude-plugins-official`. The fork bundles
+  PreToolUse / Stop / PostToolUse hooks via `hooks.json` and ships
+  richer slash commands (`/model`, `/effort`, `/agents`, `/status`,
+  silence-watchdog). `agent_setup.sh` preseeds
+  `enabledPlugins → telegram@5dive-plugins`, adds the fork repo to
+  `extraKnownMarketplaces` alongside upstream, drops the duplicate
+  hook entries (plugin owns them now), and writes
+  `AGENT_CHANNEL_MARKETPLACE=5dive-plugins` into the agent env file so
+  `5dive-agent-start` builds the right `--channels` arg.
+  `install.sh` now also writes `/etc/claude-code/managed-settings.json`
+  on first install so the channel-plugin allowlist permits both
+  marketplaces (idempotent — preserves an operator-customized file).
+  Existing telegram agents are unaffected; they stay on upstream until
+  a 5dive-api `update.sh` pass migrates them.
+
+### Fixed
+
+- `stop-failure-telegram` now parses the rate-limit reset time from
+  the StopFailure transcript instead of scraping the tmux pane.
+  When claude shows the "Stop and wait" menu the pane switches to
+  the alt screen and the "resets Xpm (TZ)" line is no longer visible
+  to `tmux capture-pane`, so the fallback DM "Usage limit hit —
+  waiting for reset." fired without the time-left tail and the
+  resume-after-reset helper got no epoch. Transcript parse reads the
+  structured rate-limit message claude logs
+  (`isApiErrorMessage=true`, text containing "resets Xpm (TZ)") —
+  authoritative and immune to tmux screen state. Pane scrape kept as
+  last resort. Supersedes the 0.5s pre-capture sleep workaround.
+- Plugin install pins the explicit `https://` URL for the marketplace
+  `add` step. `claude plugin marketplace add owner/repo` resolves the
+  GitHub shorthand to `git@github.com:owner/repo` (SSH) on some
+  claude versions, which fails for `agent-<name>` users on customer
+  VMs with no SSH key (`ERR_STREAM_PREMATURE_CLOSE` during clone).
+  Affects both the new-agent install path and `update.sh` migration.
+
 ## [0.1.4] — 2026-05-23
 
 ### Fixed
