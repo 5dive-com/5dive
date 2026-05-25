@@ -9,7 +9,28 @@ release.
 
 ## [Unreleased]
 
-## [0.1.5] — 2026-05-24
+## [0.1.6] — 2026-05-25
+
+### Changed
+
+- `preseed_claude_agent` no longer wires the standalone StopFailure hook
+  (`/usr/local/lib/5dive/stop-failure-telegram.sh`) into new fork
+  (`telegram@5dive-plugins`) agents' `settings.json`. Plugin v0.4.4
+  bundles the same hook via `hooks.json`, so preseeding the standalone
+  copy would double-fire on every rate-limit (two DMs, two
+  `resume-after-reset.sh` forks both pressing "1" on claude's
+  Stop-and-wait menu). The standalone file stays installed by
+  `scripts/install/agent-cli.sh` + `scripts/update.sh` for backward
+  compatibility — agents on upstream `telegram@claude-plugins-official`
+  still reference it. New upstream agents are unaffected by this
+  change (channels=telegram defaults to the fork anyway since v0.1.5).
+
+### Notes
+
+- Companion change in `5dive-api/scripts/update.sh` strips the
+  standalone StopFailure entry from existing fork agents' settings.json
+  on the next 03:00 UTC customer-VM update cron — same shape as the
+  existing `on_upstream_telegram()`-gated backfills, just inverted.
 
 ### Changed
 

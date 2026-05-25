@@ -26,7 +26,7 @@ esac
 
 # Bumped on every public release. `build.sh` checks this line exists; CI fails
 # the bundle-drift check if it's missing or empty.
-readonly FIVE_VERSION="0.1.5"
+readonly FIVE_VERSION="0.1.6"
 
 STATE_DIR="/var/lib/5dive"
 REGISTRY="${STATE_DIR}/agents.json"
@@ -584,22 +584,15 @@ remove_channel_secret() {
   rm -f "${CONNECTORS_DIR}/${kind}-${name}.env"
 }
 
-# Path to the shared StopFailure hook (rate-limit -> Telegram + "press 1").
-# Installed by scripts/install/agent-cli.sh + scripts/update.sh at this
-# location so every agent can reference a single canonical copy.
-STOP_FAILURE_HOOK="/usr/local/lib/5dive/stop-failure-telegram.sh"
-# Path to the shared PreToolUse hook that blocks AskUserQuestion / ExitPlanMode
-# in telegram-paired sessions (their pickers are tmux-only — Telegram users
-# never see them and the agent hangs).
-PRETOOL_TELEGRAM_HOOK="/usr/local/lib/5dive/pretool-telegram-question.sh"
-# Path to the shared Stop hook that catches "Telegram inbound this turn but
-# no reply tool call" slips and auto-relays the assistant's transcript text.
-STOP_TELEGRAM_REPLY_HOOK="/usr/local/lib/5dive/stop-telegram-reply-check.sh"
-# Path to the shared PostToolUse hook that pairs with the Stop hook —
-# relays new assistant text after each tool call so multiple in-turn
-# texts don't get coalesced or lost when the model emits text → tool →
-# text without ever calling reply.
-POSTTOOL_TELEGRAM_RELAY_HOOK="/usr/local/lib/5dive/posttool-telegram-relay.sh"
+# Standalone /usr/local/lib/5dive/ hook paths used to be preseeded into
+# new-agent settings.json. As of plugin v0.4.4 every lifecycle hook
+# (PreToolUse, PostToolUse, Stop, StopFailure) ships inside
+# telegram@5dive-plugins/hooks/hooks.json, so new fork agents no longer
+# wire any of them — preseeding would double-fire. The standalone files
+# stay installed by scripts/install/agent-cli.sh + scripts/update.sh for
+# existing-agent backward compatibility (settings.json on pre-fork
+# agents still references them); update.sh's on_upstream_telegram() also
+# strips them from fork agents that were provisioned before this change.
 # Inter-agent group mirror is fully sender-side now: every `5dive agent
 # send|ask` posts "@<receiver> <body>" to the SENDER's group via the sender's
 # bot (see mirror_interagent_outbound in cmd_agent.sh). Both halves of an
@@ -677,23 +670,12 @@ JSON
     }
   }')
   if [[ "$channels" == "telegram" ]]; then
-    # 5dive-plugins/telegram (our fork) bundles PreToolUse / Stop /
-    # PostToolUse hooks via its own hooks.json, so we no longer wire the
-    # standalone /usr/local/lib/5dive/ copies into settings.json for
-    # telegram agents — that would double-fire. StopFailure stays: the
-    # rate-limit detection + transcript scrape are 5dive-specific with
-    # no plugin equivalent yet.
-    [[ -x "$STOP_FAILURE_HOOK" ]] \
-      || warn "$STOP_FAILURE_HOOK missing — StopFailure hook not wired (run: curl -fsSL https://raw.githubusercontent.com/5dive-com/5dive/main/install.sh | sudo bash)"
-    settings=$(jq \
-      --arg hook "$STOP_FAILURE_HOOK" '
-      . + {
-        enabledPlugins: {"telegram@5dive-plugins": true},
-        hooks: {
-          StopFailure: [{hooks: [{type: "command", command: $hook, timeout: 10}]}]
-        }
-      }
-    ' <<<"$settings")
+    # 5dive-plugins/telegram (our fork) bundles every lifecycle hook —
+    # PreToolUse, PostToolUse, Stop, and (as of plugin v0.4.4) StopFailure
+    # too — via its own hooks.json. We don't preseed any of the standalone
+    # /usr/local/lib/5dive/ copies into settings.json for new fork agents;
+    # doing so would double-fire on the same event.
+    settings=$(jq '. + {enabledPlugins: {"telegram@5dive-plugins": true}}' <<<"$settings")
   elif [[ "$channels" == "discord" ]]; then
     settings=$(jq '. + {enabledPlugins: {"discord@claude-plugins-official": true}}' <<<"$settings")
   fi
