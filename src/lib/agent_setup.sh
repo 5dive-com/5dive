@@ -66,8 +66,20 @@ JSON
   # bypassPermissions alone doesn't suppress under channel-relay mode. The
   # 5dive-transcribe entry covers the voice-pack flow; harmless when voice
   # isn't installed.
+  # statusLine points at the shared /usr/local/lib/5dive/statusline.sh (mode
+  # 0755, installed by scripts/install/apps.sh + refreshed by update.sh). The
+  # main user's /home/claude/.claude/statusline.sh is mode 0600 and not
+  # reachable from agent-<name> UIDs. The shared script also tees its input
+  # JSON to $HOME/.claude/statusline-last.json so the telegram plugin's
+  # /status command can read live 5h/7d rate-limit usage. Omit the key if
+  # the file is missing (e.g. host predates the shared-copy rollout) — claude
+  # falls back to its built-in statusline.
+  local status_line_obj='{}'
+  if [[ -x /usr/local/lib/5dive/statusline.sh ]]; then
+    status_line_obj='{statusLine: {type: "command", command: "bash /usr/local/lib/5dive/statusline.sh"}}'
+  fi
   local settings
-  settings=$(jq -n '{
+  settings=$(jq -n --argjson sl "$(jq -n "$status_line_obj")" '{
     permissions: {
       defaultMode: "bypassPermissions",
       allow: ["Bash(5dive-transcribe:*)"]
@@ -82,7 +94,7 @@ JSON
         source: {source: "github", repo: "5dive-com/5dive-plugins"}
       }
     }
-  }')
+  } + $sl')
   if [[ "$channels" == "telegram" ]]; then
     # 5dive-plugins/telegram (our fork) bundles every lifecycle hook —
     # PreToolUse, PostToolUse, Stop, and (as of plugin v0.4.4) StopFailure
