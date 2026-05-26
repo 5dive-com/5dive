@@ -916,8 +916,15 @@ cmd_config() {
       ensure_hermes_gateway "$name"
     fi
   fi
-  step "Restarting agent to apply"
-  systemctl restart "5dive-agent@${name}.service" >&2
+  # Defer the restart so the calling process (often `sudo -n 5dive agent
+  # set-account` invoked from inside the agent's own bot) gets to return
+  # before its service is torn down. An immediate `systemctl restart` here
+  # SIGTERMs our own sudo subprocess → caller sees a spurious failure even
+  # though the config write committed. systemd-run --on-active=1 --collect
+  # fires the restart ~1s later as a transient unit that survives our exit.
+  step "Restarting agent to apply (deferred ~1s)"
+  systemd-run --on-active=1 --collect \
+    /bin/systemctl restart "5dive-agent@${name}.service" >&2
   local applied_json
   applied_json=$(printf '%s\n' "${applied_keys[@]+"${applied_keys[@]}"}" | jq -R . | jq -cs '. | map(select(length > 0))')
   ok "config applied." \
