@@ -120,7 +120,18 @@ if [[ "$TYPE" == "codex" ]]; then
   fi
   # Bypass codex's first-run trust prompt + approval/sandbox dialogs. Mirrors
   # the `--dangerously-skip-permissions` posture we use for claude-family.
-  cat > "$AGENT_CODEX_HOME/config.toml" <<TOML
+  #
+  # Create-if-missing only. Writing this unconditionally on every start
+  # clobbered anything the user added to config.toml — most importantly
+  # [mcp_servers.*] sections added via `codex mcp add`, which an agent
+  # restart then silently wiped. We seed the required keys once, on first
+  # start (before any MCP server could exist); thereafter the file is the
+  # user's to extend and we never touch it. A merge that appended only the
+  # missing keys was considered but rejected: appending a bare top-level key
+  # after an existing [table] header binds it to that table in TOML, so it
+  # can't be done safely without a real parser.
+  if [[ ! -f "$AGENT_CODEX_HOME/config.toml" ]]; then
+    cat > "$AGENT_CODEX_HOME/config.toml" <<TOML
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 check_for_update_on_startup = false
@@ -128,7 +139,8 @@ check_for_update_on_startup = false
 [projects."${WORKDIR}"]
 trust_level = "trusted"
 TOML
-  chmod 600 "$AGENT_CODEX_HOME/config.toml"
+    chmod 600 "$AGENT_CODEX_HOME/config.toml"
+  fi
   CODEX_OVERRIDE="export CODEX_HOME=$(printf %q "$AGENT_CODEX_HOME"); "
 fi
 

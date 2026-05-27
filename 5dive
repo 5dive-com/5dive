@@ -26,7 +26,7 @@ esac
 
 # Bumped on every public release. `build.sh` checks this line exists; CI fails
 # the bundle-drift check if it's missing or empty.
-readonly FIVE_VERSION="0.1.6"
+readonly FIVE_VERSION="0.1.7"
 
 STATE_DIR="/var/lib/5dive"
 REGISTRY="${STATE_DIR}/agents.json"
@@ -1181,6 +1181,14 @@ ensure_state() {
   [[ -f "$REGISTRY_LOCK" ]] || : > "$REGISTRY_LOCK"
   chown root:claude "$REGISTRY_LOCK"
   chmod 640 "$REGISTRY_LOCK"
+  # Group-writable tasks/org store (unlike the rest of STATE_DIR, which is
+  # root-only): the shared task queue is meant to be used by every agent
+  # without sudo. 2770 + setgid keeps the db and its -wal/-shm sidecars
+  # owned by group claude and writable across agent users. tasks_db_init
+  # (re)applies the schema lazily on first use.
+  mkdir -p "$TASKS_DIR"
+  chown root:claude "$TASKS_DIR"
+  chmod 2770 "$TASKS_DIR"
   audit_init
 }
 
@@ -1279,6 +1287,201 @@ registry_write() {
   chmod 640 "$tmp"
   mv "$tmp" "$REGISTRY"
 }
+
+# -------- tasks + org store (sqlite) --------
+#
+# A light, host-shared task queue + agent org-chart, kept SEPARATE from the
+# root-only agent registry. It lives in a GROUP-WRITABLE subdir so any agent
+# (every agent-<x> user is in group `claude`) can add/list/update tasks
+# WITHOUT sudo — these are high-frequency, low-risk operations, unlike
+# `agent create` which provisions Linux users and stays root-only.
+#
+# Storage: /var/lib/5dive/tasks/tasks.db (sqlite, WAL). The dir is 2770
+# root:claude (setgid) and we run under umask 0002 so the .db plus its
+# -wal/-shm sidecars stay group-writable for the next agent's connection.
+
+TASKS_DIR="${STATE_DIR}/tasks"
+TASKS_DB="${TASKS_DIR}/tasks.db"
+
+# Quote an arbitrary string as a SQL literal: double embedded single quotes
+# and wrap. The sqlite3 CLI has no ergonomic bind-parameter path from bash,
+# so this is the safe way to inline a shell value — use it for EVERY
+# user-supplied TEXT value to keep injection impossible.
+sqlq() {
+  local s=${1//\'/\'\'}
+  printf "'%s'" "$s"
+}
+
+# SQL NULL for empty input, otherwise a quoted literal.
+sqlq_or_null() {
+  [[ -z "${1:-}" ]] && { printf 'NULL'; return; }
+  sqlq "$1"
+}
+
+# Agents can't apt-install, so route a missing binary to the repair path
+# rather than a raw "sqlite3: command not found".
+require_sqlite() {
+  command -v sqlite3 >/dev/null 2>&1 || fail "$E_NOT_INSTALLED" \
+    "sqlite3 not installed — run: sudo 5dive doctor --repair  (or: sudo apt-get install -y sqlite3)"
+}
+
+# Idempotent schema. CREATE IF NOT EXISTS throughout, so re-applying it on
+# every command is cheap and self-heals a fresh box. DIVE-N idents come from
+# a trigger off the autoincrement rowid.
+_tasks_schema() {
+  cat <<'SQL'
+PRAGMA journal_mode=WAL;
+PRAGMA foreign_keys=ON;
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ident       TEXT UNIQUE,
+  title       TEXT NOT NULL,
+  body        TEXT,
+  status      TEXT NOT NULL DEFAULT 'todo',
+  priority    TEXT NOT NULL DEFAULT 'medium',
+  assignee    TEXT,
+  created_by  TEXT,
+  parent_id   INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  started_at  TEXT,
+  done_at     TEXT,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS task_deps (
+  task_id     INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  blocked_by  INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  PRIMARY KEY (task_id, blocked_by)
+);
+
+CREATE TABLE IF NOT EXISTS agents_org (
+  name        TEXT PRIMARY KEY,
+  reports_to  TEXT REFERENCES agents_org(name) ON DELETE SET NULL,
+  role        TEXT,
+  title       TEXT,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS tasks_status_idx   ON tasks(status);
+CREATE INDEX IF NOT EXISTS tasks_assignee_idx ON tasks(assignee, status);
+CREATE INDEX IF NOT EXISTS tasks_parent_idx   ON tasks(parent_id);
+
+CREATE TRIGGER IF NOT EXISTS tasks_ident_ai AFTER INSERT ON tasks
+WHEN NEW.ident IS NULL
+BEGIN
+  UPDATE tasks SET ident='DIVE-'||NEW.id WHERE id=NEW.id;
+END;
+
+-- Touch updated_at on change. The WHEN guard stops the trigger recursing on
+-- its own write (it only fires when updated_at wasn't itself just changed).
+CREATE TRIGGER IF NOT EXISTS tasks_touch_au AFTER UPDATE ON tasks
+WHEN OLD.updated_at = NEW.updated_at
+BEGIN
+  UPDATE tasks SET updated_at=datetime('now') WHERE id=NEW.id;
+END;
+
+-- The "organized view" behind `task ls`: open work, priority then age.
+CREATE VIEW IF NOT EXISTS task_board AS
+  SELECT ident, status, priority, COALESCE(assignee,'-') AS assignee,
+         title, COALESCE(created_by,'-') AS created_by, created_at, id
+  FROM tasks
+  WHERE status NOT IN ('done','cancelled')
+  ORDER BY CASE priority
+             WHEN 'urgent' THEN 0 WHEN 'high' THEN 1
+             WHEN 'medium' THEN 2 ELSE 3 END,
+           created_at;
+SQL
+}
+
+# Create the group-writable tasks dir + db and apply the schema. Safe to call
+# repeatedly; command functions call it first. If the dir is missing and we
+# aren't root we can't create it (parent /var/lib/5dive is 2750), so emit a
+# one-time bootstrap hint instead of a cryptic failure.
+tasks_db_init() {
+  require_sqlite
+  umask 0002
+  if [[ ! -d "$TASKS_DIR" ]]; then
+    if [[ $EUID -eq 0 ]]; then
+      mkdir -p "$TASKS_DIR"
+      chown root:claude "$TASKS_DIR"
+      chmod 2770 "$TASKS_DIR"
+    else
+      fail "$E_PERMISSION" "tasks store not initialised — run once: sudo 5dive task init"
+    fi
+  fi
+  # Apply the schema only when the db is uninitialised. Re-running it on every
+  # command would take a write lock each time and, under concurrent agents,
+  # collide ("database is locked"); a cheap read of sqlite_master takes only a
+  # WAL read-lock, which never blocks writers. .timeout lets a genuine
+  # first-run race serialise instead of erroring. stdout is discarded because
+  # `PRAGMA journal_mode=WAL` echoes "wal".
+  local has
+  has=$(sqlite3 -cmd ".timeout 5000" "$TASKS_DB" \
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks' LIMIT 1;" 2>/dev/null)
+  if [[ "$has" != "1" ]]; then
+    sqlite3 -cmd ".timeout 5000" "$TASKS_DB" < <(_tasks_schema) >/dev/null \
+      || fail "$E_GENERIC" "failed to initialise tasks db at $TASKS_DB"
+    chmod 0660 "$TASKS_DB" 2>/dev/null || true
+  fi
+}
+
+# Per-connection setup, passed via -cmd / .timeout so it produces NO output
+# rows (an inline `PRAGMA busy_timeout=N;` echoes the value, which would
+# corrupt anything that captures a query result). .timeout makes concurrent
+# agent writers retry instead of erroring with "database is locked";
+# foreign_keys=ON enables the ON DELETE cascades.
+db() {
+  umask 0002
+  sqlite3 -cmd ".timeout 5000" -cmd "PRAGMA foreign_keys=ON" "$TASKS_DB" "$1"
+}
+
+# Formatted read: dbfmt <sqlite-flag> "<sql>"  (e.g. -box, -json, -line).
+dbfmt() {
+  umask 0002
+  sqlite3 -cmd ".timeout 5000" -cmd "PRAGMA foreign_keys=ON" "$1" "$TASKS_DB" "$2"
+}
+
+# Resolve a task ref (numeric id or DIVE-N) into the global RESOLVED_TASK_ID,
+# or fail. Sets a global rather than echoing so the `fail` error path runs in
+# the caller's shell (not a $() subshell) — otherwise a --json error envelope
+# would be captured into the caller's var instead of reaching stdout. Shape is
+# validated before anything touches SQL.
+RESOLVED_TASK_ID=""
+resolve_task_id() {
+  local ref="$1" id
+  if [[ "$ref" =~ ^[0-9]+$ ]]; then
+    id="$ref"
+  elif [[ "$ref" =~ ^[Dd][Ii][Vv][Ee]-([0-9]+)$ ]]; then
+    id="${BASH_REMATCH[1]}"
+  else
+    fail "$E_VALIDATION" "bad task ref '$ref' (expected <number> or DIVE-<number>)"
+  fi
+  local found
+  found=$(db "SELECT id FROM tasks WHERE id=${id};")
+  [[ -n "$found" ]] || fail "$E_NOT_FOUND" "no such task: $ref"
+  RESOLVED_TASK_ID="$id"
+}
+
+# Who is acting: --from wins, else infer from SUDO_USER (sudo path) or $USER
+# (agent running directly as agent-<x>), else the literal "cli".
+task_actor() {
+  local from="${1:-}"
+  [[ -n "$from" ]] && { printf '%s' "$from"; return; }
+  local s; s=$(auto_sender_from_sudo)
+  [[ -n "$s" ]] && { printf '%s' "$s"; return; }
+  local u="${USER:-$(id -un 2>/dev/null)}"
+  [[ "$u" == agent-* ]] && { printf '%s' "${u#agent-}"; return; }
+  printf 'cli'
+}
+
+valid_task_status()   { [[ "$1" =~ ^(todo|in_progress|blocked|done|cancelled)$ ]]; }
+valid_task_priority() { [[ "$1" =~ ^(low|medium|high|urgent)$ ]]; }
+
+# Indent every line of stdin by two spaces. Used for the nested lists in
+# `task show` / `org show`; a plain `printf '  %s\n' "$var"` only indents the
+# first line, and unquoting splits values that contain spaces (task titles).
+indent2() { while IFS= read -r _l; do printf '  %s\n' "$_l"; done; }
 
 # -------- auth status (per type, default profile) --------
 
@@ -5893,6 +6096,7 @@ cmd_doctor() {
     doctor_check_cmd jq        jq        jq
     doctor_check_cmd python3   python3   python3
     doctor_check_cmd curl      curl      curl
+    doctor_check_cmd sqlite3   sqlite3   sqlite3
     doctor_check_cmd sudo      sudo
     doctor_check_cmd systemctl systemctl
     doctor_check_cmd journalctl journalctl
@@ -6838,6 +7042,398 @@ HELP
   fi
 }
 
+
+# -------- 5dive task — host-shared task queue --------
+
+_task_usage() {
+  cat <<USAGE
+5dive task — shared task queue (sqlite at ${STATE_DIR}/tasks/tasks.db)
+
+  5dive task init                                    # one-time root bootstrap of the store
+  5dive task add <title...> [--body=<text>] [--priority=low|medium|high|urgent]
+                            [--assignee=<agent>] [--parent=<id|DIVE-N>] [--from=<who>]
+  5dive task ls [--status=<s>] [--assignee=<agent>] [--mine] [--all]
+                                                     # default: open tasks, priority-ordered
+  5dive task show <id|DIVE-N>                        # full detail + subtasks + blockers
+  5dive task assign <id|DIVE-N> <agent>
+  5dive task start  <id|DIVE-N>                      # -> in_progress
+  5dive task done   <id|DIVE-N>                      # -> done
+  5dive task cancel <id|DIVE-N>                      # -> cancelled
+  5dive task block   <id|DIVE-N> --by=<id|DIVE-N>    # add a blocks edge, mark blocked
+  5dive task unblock <id|DIVE-N> [--by=<id|DIVE-N>]  # drop edge(s); back to todo if clear
+  5dive task rm <id|DIVE-N>                          # delete (cascades subtasks + edges)
+
+  status: todo | in_progress | blocked | done | cancelled
+  Any agent (group claude) can run these without sudo. Add --json for machine output.
+USAGE
+}
+
+cmd_task() {
+  [[ $# -gt 0 ]] || { _task_usage; exit "$E_USAGE"; }
+  local sub="$1"; shift
+  case "$sub" in
+    init)            cmd_task_init "$@" ;;
+    add|new)         cmd_task_add "$@" ;;
+    ls|list)         cmd_task_ls "$@" ;;
+    show|view)       cmd_task_show "$@" ;;
+    assign)          cmd_task_assign "$@" ;;
+    start)           cmd_task_start "$@" ;;
+    done|close)      cmd_task_done "$@" ;;
+    cancel)          cmd_task_cancel "$@" ;;
+    block)           cmd_task_block "$@" ;;
+    unblock)         cmd_task_unblock "$@" ;;
+    rm|delete)       cmd_task_rm "$@" ;;
+    -h|--help|help)  _task_usage ;;
+    *) fail "$E_USAGE" "unknown task command: $sub (try: 5dive task --help)" ;;
+  esac
+}
+
+cmd_task_init() {
+  require_root "task init"
+  tasks_db_init
+  ok "tasks store ready at $TASKS_DB" '{path:$p}' --arg p "$TASKS_DB"
+}
+
+cmd_task_add() {
+  tasks_db_init
+  local body="" priority="medium" assignee="" parent="" from=""
+  local -a words=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --body=*)     body="${1#*=}" ;;
+      --priority=*) priority="${1#*=}" ;;
+      --assignee=*) assignee="${1#*=}" ;;
+      --parent=*)   parent="${1#*=}" ;;
+      --from=*)     from="${1#*=}" ;;
+      --)           shift; words+=("$@"); break ;;
+      -*)           fail "$E_USAGE" "unknown flag: $1" ;;
+      *)            words+=("$1") ;;
+    esac
+    shift
+  done
+  local title="${words[*]:-}"
+  [[ -n "$title" ]] || fail "$E_USAGE" "usage: 5dive task add <title...> [--body=] [--priority=] [--assignee=] [--parent=]"
+  valid_task_priority "$priority" || fail "$E_VALIDATION" "bad priority '$priority' (low|medium|high|urgent)"
+  local parent_sql="NULL"
+  if [[ -n "$parent" ]]; then
+    resolve_task_id "$parent"; parent_sql="$RESOLVED_TASK_ID"
+  fi
+  local creator; creator=$(task_actor "$from")
+  local id
+  id=$(db "INSERT INTO tasks (title, body, priority, assignee, created_by, parent_id)
+           VALUES ($(sqlq "$title"), $(sqlq_or_null "$body"), $(sqlq "$priority"),
+                   $(sqlq_or_null "$assignee"), $(sqlq "$creator"), ${parent_sql});
+           SELECT last_insert_rowid();")
+  ok "created DIVE-$id — $title" \
+     '{id:($i|tonumber), ident:("DIVE-"+$i), title:$t, priority:$p, assignee:$a, created_by:$c}' \
+     --arg i "$id" --arg t "$title" --arg p "$priority" --arg a "${assignee:-}" --arg c "$creator"
+}
+
+cmd_task_ls() {
+  tasks_db_init
+  local status="" assignee="" mine=0 all=0 from=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --status=*)   status="${1#*=}" ;;
+      --assignee=*) assignee="${1#*=}" ;;
+      --mine)       mine=1 ;;
+      --all)        all=1 ;;
+      --from=*)     from="${1#*=}" ;;
+      -*)           fail "$E_USAGE" "unknown flag: $1" ;;
+      *)            fail "$E_USAGE" "unexpected arg: $1" ;;
+    esac
+    shift
+  done
+  [[ $mine -eq 1 ]] && assignee=$(task_actor "$from")
+  local where="1=1"
+  if [[ -n "$status" ]]; then
+    valid_task_status "$status" || fail "$E_VALIDATION" "bad status '$status' (todo|in_progress|blocked|done|cancelled)"
+    where+=" AND status=$(sqlq "$status")"
+  elif [[ $all -ne 1 ]]; then
+    where+=" AND status NOT IN ('done','cancelled')"
+  fi
+  [[ -n "$assignee" ]] && where+=" AND assignee=$(sqlq "$assignee")"
+  local order="ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at"
+  if (( JSON_MODE )); then
+    local rows
+    rows=$(dbfmt -json "SELECT id, ident, title, status, priority, assignee, created_by, parent_id, created_at FROM tasks WHERE ${where} ${order};")
+    [[ -n "$rows" ]] || rows="[]"
+    jq -cn --argjson r "$rows" '{ok:true, data:{tasks:$r}}'
+  else
+    dbfmt -box "SELECT ident, status, priority, COALESCE(assignee,'-') AS assignee, title FROM tasks WHERE ${where} ${order};"
+  fi
+}
+
+cmd_task_show() {
+  tasks_db_init
+  [[ $# -gt 0 ]] || fail "$E_USAGE" "usage: 5dive task show <id|DIVE-N>"
+  resolve_task_id "$1"; local id="$RESOLVED_TASK_ID"
+  if (( JSON_MODE )); then
+    local task subs deps
+    task=$(dbfmt -json "SELECT * FROM tasks WHERE id=${id};")
+    subs=$(dbfmt -json "SELECT id,ident,title,status FROM tasks WHERE parent_id=${id} ORDER BY id;")
+    deps=$(dbfmt -json "SELECT t.id,t.ident,t.title,t.status FROM task_deps d JOIN tasks t ON t.id=d.blocked_by WHERE d.task_id=${id} ORDER BY t.id;")
+    [[ -n "$subs" ]] || subs="[]"
+    [[ -n "$deps" ]] || deps="[]"
+    jq -cn --argjson t "$task" --argjson s "$subs" --argjson b "$deps" \
+      '{ok:true, data:{task:($t[0]), subtasks:$s, blocked_by:$b}}'
+  else
+    dbfmt -line "SELECT ident, title, status, priority, assignee, created_by, parent_id, created_at, started_at, done_at, body FROM tasks WHERE id=${id};"
+    local subs
+    subs=$(db "SELECT ident||'  ['||status||']  '||title FROM tasks WHERE parent_id=${id} ORDER BY id;")
+    [[ -n "$subs" ]] && { echo; echo "subtasks:"; printf '%s\n' "$subs" | indent2; }
+    local deps
+    deps=$(db "SELECT t.ident||'  ['||t.status||']  '||t.title FROM task_deps d JOIN tasks t ON t.id=d.blocked_by WHERE d.task_id=${id} ORDER BY t.id;")
+    [[ -n "$deps" ]] && { echo; echo "blocked by:"; printf '%s\n' "$deps" | indent2; }
+  fi
+}
+
+cmd_task_assign() {
+  tasks_db_init
+  [[ $# -ge 2 ]] || fail "$E_USAGE" "usage: 5dive task assign <id|DIVE-N> <agent>"
+  resolve_task_id "$1"; local id="$RESOLVED_TASK_ID"
+  local who="$2"
+  db "UPDATE tasks SET assignee=$(sqlq "$who") WHERE id=${id};"
+  ok "DIVE-$id assigned to $who" '{id:($i|tonumber), assignee:$a}' --arg i "$id" --arg a "$who"
+}
+
+_task_status_cmd() {
+  local newstatus="$1" extra="$2" verb="$3"; shift 3
+  tasks_db_init
+  [[ $# -gt 0 ]] || fail "$E_USAGE" "usage: 5dive task $verb <id|DIVE-N>"
+  resolve_task_id "$1"; local id="$RESOLVED_TASK_ID"
+  db "UPDATE tasks SET status=$(sqlq "$newstatus")${extra} WHERE id=${id};"
+  ok "DIVE-$id $verb" '{id:($i|tonumber), status:$s}' --arg i "$id" --arg s "$newstatus"
+}
+
+cmd_task_start()  { _task_status_cmd in_progress ", started_at=COALESCE(started_at, datetime('now'))" start "$@"; }
+cmd_task_done()   { _task_status_cmd done ", done_at=datetime('now')" done "$@"; }
+cmd_task_cancel() { _task_status_cmd cancelled ", done_at=datetime('now')" cancel "$@"; }
+
+cmd_task_block() {
+  tasks_db_init
+  local task="" by=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --by=*) by="${1#*=}" ;;
+      -*)     fail "$E_USAGE" "unknown flag: $1" ;;
+      *)      [[ -z "$task" ]] && task="$1" || fail "$E_USAGE" "unexpected arg: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$task" && -n "$by" ]] || fail "$E_USAGE" "usage: 5dive task block <id|DIVE-N> --by=<id|DIVE-N>"
+  resolve_task_id "$task"; local tid="$RESOLVED_TASK_ID"
+  resolve_task_id "$by";   local bid="$RESOLVED_TASK_ID"
+  [[ "$tid" != "$bid" ]] || fail "$E_VALIDATION" "a task can't block itself"
+  db "INSERT OR IGNORE INTO task_deps (task_id, blocked_by) VALUES (${tid}, ${bid});
+      UPDATE tasks SET status='blocked' WHERE id=${tid} AND status NOT IN ('done','cancelled');"
+  ok "DIVE-$tid blocked by DIVE-$bid" '{task:($t|tonumber), blocked_by:($b|tonumber)}' --arg t "$tid" --arg b "$bid"
+}
+
+cmd_task_unblock() {
+  tasks_db_init
+  local task="" by=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --by=*) by="${1#*=}" ;;
+      -*)     fail "$E_USAGE" "unknown flag: $1" ;;
+      *)      [[ -z "$task" ]] && task="$1" || fail "$E_USAGE" "unexpected arg: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$task" ]] || fail "$E_USAGE" "usage: 5dive task unblock <id|DIVE-N> [--by=<id|DIVE-N>]"
+  resolve_task_id "$task"; local tid="$RESOLVED_TASK_ID"
+  if [[ -n "$by" ]]; then
+    resolve_task_id "$by"; local bid="$RESOLVED_TASK_ID"
+    db "DELETE FROM task_deps WHERE task_id=${tid} AND blocked_by=${bid};"
+  else
+    db "DELETE FROM task_deps WHERE task_id=${tid};"
+  fi
+  db "UPDATE tasks SET status='todo'
+      WHERE id=${tid} AND status='blocked'
+        AND NOT EXISTS (SELECT 1 FROM task_deps WHERE task_id=${tid});"
+  ok "DIVE-$tid unblocked" '{task:($t|tonumber)}' --arg t "$tid"
+}
+
+cmd_task_rm() {
+  tasks_db_init
+  [[ $# -gt 0 ]] || fail "$E_USAGE" "usage: 5dive task rm <id|DIVE-N>"
+  resolve_task_id "$1"; local id="$RESOLVED_TASK_ID"
+  db "DELETE FROM tasks WHERE id=${id};"
+  ok "DIVE-$id deleted" '{id:($i|tonumber), deleted:true}' --arg i "$id"
+}
+
+# -------- 5dive org — agent org chart --------
+#
+# Subordination is a single self-referential column (agents_org.reports_to),
+# the same shape Paperclip uses. The org chart only earns its keep once a
+# fleet grows past a handful of agents, so this stays deliberately small:
+# who reports to whom, plus an optional role/title label.
+
+_org_usage() {
+  cat <<USAGE
+5dive org — agent org chart (who reports to whom)
+
+  5dive org set <agent> [--manager=<agent>|default] [--role=<text>] [--title=<text>]
+                                                     # upsert; --manager=default clears
+  5dive org tree                                     # the whole hierarchy, indented
+  5dive org show <agent>                             # manager + direct reports
+  5dive org ls                                       # flat list of everyone placed
+  5dive org rm <agent>                               # remove (reports re-parent to null)
+
+  Any agent (group claude) can run these without sudo. Add --json for machine output.
+USAGE
+}
+
+cmd_org() {
+  [[ $# -gt 0 ]] || { _org_usage; exit "$E_USAGE"; }
+  local sub="$1"; shift
+  case "$sub" in
+    set)             cmd_org_set "$@" ;;
+    tree)            cmd_org_tree "$@" ;;
+    show)            cmd_org_show "$@" ;;
+    ls|list)         cmd_org_ls "$@" ;;
+    rm|delete)       cmd_org_rm "$@" ;;
+    -h|--help|help)  _org_usage ;;
+    *) fail "$E_USAGE" "unknown org command: $sub (try: 5dive org --help)" ;;
+  esac
+}
+
+cmd_org_set() {
+  tasks_db_init
+  local name="" manager="" role="" title=""
+  local mgr_set=0 role_set=0 title_set=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --manager=*) manager="${1#*=}"; mgr_set=1 ;;
+      --role=*)    role="${1#*=}";    role_set=1 ;;
+      --title=*)   title="${1#*=}";   title_set=1 ;;
+      -*)          fail "$E_USAGE" "unknown flag: $1" ;;
+      *)           [[ -z "$name" ]] && name="$1" || fail "$E_USAGE" "unexpected arg: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$name" ]] || fail "$E_USAGE" "usage: 5dive org set <agent> [--manager=] [--role=] [--title=]"
+  valid_sender_label "$name" || fail "$E_VALIDATION" "bad agent name '$name'"
+  (( mgr_set || role_set || title_set )) || fail "$E_USAGE" "nothing to set — pass --manager, --role and/or --title"
+
+  # Resolve the manager value: default/none/empty clears the edge.
+  local mgr_clear=0 mgr_name=""
+  if (( mgr_set )); then
+    case "$manager" in
+      ""|default|none) mgr_clear=1 ;;
+      *)
+        valid_sender_label "$manager" || fail "$E_VALIDATION" "bad manager name '$manager'"
+        [[ "$manager" != "$name" ]] || fail "$E_VALIDATION" "an agent can't report to itself"
+        mgr_name="$manager"
+        # Reject cycles: $name must not already sit above $manager in the chain.
+        local cyc
+        cyc=$(db "WITH RECURSIVE up(n) AS (
+                    SELECT $(sqlq "$manager")
+                    UNION ALL
+                    SELECT a.reports_to FROM agents_org a JOIN up ON a.name=up.n
+                    WHERE a.reports_to IS NOT NULL)
+                  SELECT 1 FROM up WHERE n=$(sqlq "$name") LIMIT 1;")
+        [[ -z "$cyc" ]] || fail "$E_CONFLICT" "that would create a reporting cycle ($manager already reports up to $name)"
+        ;;
+    esac
+  fi
+
+  db "INSERT OR IGNORE INTO agents_org (name) VALUES ($(sqlq "$name"));"
+  if (( mgr_set )); then
+    if (( mgr_clear )); then
+      db "UPDATE agents_org SET reports_to=NULL, updated_at=datetime('now') WHERE name=$(sqlq "$name");"
+    else
+      db "INSERT OR IGNORE INTO agents_org (name) VALUES ($(sqlq "$mgr_name"));
+          UPDATE agents_org SET reports_to=$(sqlq "$mgr_name"), updated_at=datetime('now') WHERE name=$(sqlq "$name");"
+    fi
+  fi
+  (( role_set ))  && db "UPDATE agents_org SET role=$(sqlq_or_null "$role"),   updated_at=datetime('now') WHERE name=$(sqlq "$name");"
+  (( title_set )) && db "UPDATE agents_org SET title=$(sqlq_or_null "$title"), updated_at=datetime('now') WHERE name=$(sqlq "$name");"
+
+  if (( JSON_MODE )); then
+    local row; row=$(dbfmt -json "SELECT name, reports_to, role, title FROM agents_org WHERE name=$(sqlq "$name");")
+    jq -cn --argjson r "$row" '{ok:true, data:($r[0])}'
+  else
+    local mgr; mgr=$(db "SELECT COALESCE(reports_to,'(top)') FROM agents_org WHERE name=$(sqlq "$name");")
+    ok "$name -> reports to $mgr"
+  fi
+}
+
+cmd_org_tree() {
+  tasks_db_init
+  [[ $# -eq 0 ]] || fail "$E_USAGE" "usage: 5dive org tree"
+  local count; count=$(db "SELECT COUNT(*) FROM agents_org;")
+  if [[ "$count" == "0" ]]; then
+    if (( JSON_MODE )); then jq -cn '{ok:true, data:{tree:[]}}'; else echo "(org chart empty — place agents with: 5dive org set <agent> --manager=<agent>)"; fi
+    return 0
+  fi
+  # Roots: no manager, or a manager that isn't itself placed (orphans surface
+  # rather than vanish). Walk down from there; path drives display order.
+  local cte="WITH RECURSIVE tree(name, reports_to, role, title, depth, path) AS (
+      SELECT name, reports_to, role, title, 0, name
+      FROM agents_org
+      WHERE reports_to IS NULL OR reports_to NOT IN (SELECT name FROM agents_org)
+      UNION ALL
+      SELECT a.name, a.reports_to, a.role, a.title, t.depth+1, t.path||'/'||a.name
+      FROM agents_org a JOIN tree t ON a.reports_to = t.name)"
+  if (( JSON_MODE )); then
+    local rows; rows=$(dbfmt -json "${cte} SELECT name, reports_to, role, title, depth FROM tree ORDER BY path;")
+    [[ -n "$rows" ]] || rows="[]"
+    jq -cn --argjson r "$rows" '{ok:true, data:{tree:$r}}'
+  else
+    # Default list mode: no header, one column -> one indented line per row.
+    db "${cte}
+      SELECT substr('                                        ', 1, depth*2)
+             || name
+             || CASE WHEN title IS NOT NULL THEN '  — '||title
+                     WHEN role  IS NOT NULL THEN '  — '||role ELSE '' END
+      FROM tree ORDER BY path;"
+  fi
+}
+
+cmd_org_show() {
+  tasks_db_init
+  [[ $# -gt 0 ]] || fail "$E_USAGE" "usage: 5dive org show <agent>"
+  local name="$1"
+  valid_sender_label "$name" || fail "$E_VALIDATION" "bad agent name '$name'"
+  local exists; exists=$(db "SELECT 1 FROM agents_org WHERE name=$(sqlq "$name");")
+  [[ -n "$exists" ]] || fail "$E_NOT_FOUND" "agent '$name' is not placed in the org chart"
+  if (( JSON_MODE )); then
+    local self reports
+    self=$(dbfmt -json "SELECT name, reports_to, role, title FROM agents_org WHERE name=$(sqlq "$name");")
+    reports=$(dbfmt -json "SELECT name, role, title FROM agents_org WHERE reports_to=$(sqlq "$name") ORDER BY name;")
+    [[ -n "$reports" ]] || reports="[]"
+    jq -cn --argjson s "$self" --argjson r "$reports" '{ok:true, data:($s[0] + {direct_reports:$r})}'
+  else
+    dbfmt -line "SELECT name, COALESCE(reports_to,'(top)') AS reports_to, role, title FROM agents_org WHERE name=$(sqlq "$name");"
+    local reps; reps=$(db "SELECT name FROM agents_org WHERE reports_to=$(sqlq "$name") ORDER BY name;")
+    if [[ -n "$reps" ]]; then echo; echo "direct reports:"; printf '%s\n' "$reps" | indent2; else echo; echo "direct reports: (none)"; fi
+  fi
+}
+
+cmd_org_ls() {
+  tasks_db_init
+  [[ $# -eq 0 ]] || fail "$E_USAGE" "usage: 5dive org ls"
+  if (( JSON_MODE )); then
+    local rows; rows=$(dbfmt -json "SELECT name, reports_to, role, title FROM agents_org ORDER BY name;")
+    [[ -n "$rows" ]] || rows="[]"
+    jq -cn --argjson r "$rows" '{ok:true, data:{agents:$r}}'
+  else
+    dbfmt -box "SELECT name, COALESCE(reports_to,'-') AS reports_to, COALESCE(role,'-') AS role, COALESCE(title,'-') AS title FROM agents_org ORDER BY name;"
+  fi
+}
+
+cmd_org_rm() {
+  tasks_db_init
+  [[ $# -gt 0 ]] || fail "$E_USAGE" "usage: 5dive org rm <agent>"
+  local name="$1"
+  valid_sender_label "$name" || fail "$E_VALIDATION" "bad agent name '$name'"
+  local exists; exists=$(db "SELECT 1 FROM agents_org WHERE name=$(sqlq "$name");")
+  [[ -n "$exists" ]] || fail "$E_NOT_FOUND" "agent '$name' is not placed in the org chart"
+  db "DELETE FROM agents_org WHERE name=$(sqlq "$name");"
+  ok "$name removed from org chart" '{name:$n, removed:true}' --arg n "$name"
+}
 # -------- top-level dispatch --------
 
 usage() {
@@ -6973,6 +7569,19 @@ Auth (lower-level; the dashboard uses these — prefer 'account' for human-drive
   5dive agent auth poll <session_id>                         # {state, url, error}
   5dive agent auth submit <session_id> --code=<callback>     # paste the claude callback code
   5dive agent auth cancel <session_id>
+
+Tasks (shared queue, sqlite — any agent, no sudo):
+  5dive task add <title...> [--priority=low|medium|high|urgent] [--assignee=<agent>] [--parent=<id>]
+  5dive task ls [--mine] [--status=<s>] [--all]      # open work, priority-ordered
+  5dive task show|start|done|cancel|rm <id|DIVE-N>
+  5dive task assign <id|DIVE-N> <agent>
+  5dive task block <id|DIVE-N> --by=<id|DIVE-N>
+  # full surface: 5dive task --help
+
+Org chart (who reports to whom):
+  5dive org set <agent> --manager=<agent> [--role=<text>] [--title=<text>]
+  5dive org tree | show <agent> | ls | rm <agent>
+  # full surface: 5dive org --help
 
 Health:
   5dive doctor [--repair] [--category=deps|types|auth|registry|shelld]
@@ -7174,6 +7783,14 @@ main() {
     watch)
       # Live multi-agent dashboard (htop-style). Read-only — no audit, no lock.
       cmd_watch "$@" ;;
+    task)
+      # Shared task queue (sqlite). Group-writable store, so no root/lock and
+      # no audit — these are high-frequency, low-risk ops any agent runs. SQLite
+      # serializes its own writes (busy_timeout) so with_registry_lock isn't needed.
+      cmd_task "$@" ;;
+    org)
+      # Agent org chart (sqlite, same store as tasks). Read/write, no audit/lock.
+      cmd_org "$@" ;;
     init)
       # Interactive first-run wizard: pick a type → install → auth → create
       # → "send hello". Calls back into the same CLI for each step.

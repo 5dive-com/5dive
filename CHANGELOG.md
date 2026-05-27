@@ -9,8 +9,21 @@ release.
 
 ## [Unreleased]
 
+## [0.1.7] — 2026-05-27
+
 ### Added
 
+- `5dive task` — a host-shared, sqlite-backed task queue any agent can use
+  without sudo (store at `/var/lib/5dive/tasks/tasks.db`, in a group-writable
+  `2770` subdir so writes need no root, unlike the root-only registry).
+  Subcommands add/ls/show/assign/start/done/cancel/block/unblock/rm, with
+  DIVE-N identifiers, subtasks (`--parent`), blocks-edges, a priority-ordered
+  board view, and `--json` on every subcommand.
+- `5dive org` — agent org chart over the same store: set/tree/show/ls/rm,
+  with a `reports_to` subordination edge, reporting-cycle prevention, and a
+  recursive-CTE tree view.
+- `install.sh` + `5dive doctor` now install / verify `sqlite3`, required by
+  the new task + org store.
 - `install.sh` now installs the `5dive-hermes-perms.{path,service}` systemd
   units alongside the agent template. Hermes regresses
   `/home/claude/.hermes` to 0700 on every auth.json/config.yaml write,
@@ -34,6 +47,13 @@ release.
 - `5dive init` prints a Teams-org heads-up after the Telegram pairing
   step pointing at `sudo 5dive doctor --category=channels` and the
   Anthropic Console setup snippet.
+
+### Fixed
+
+- `5dive-agent-start` no longer rewrites a codex agent's `config.toml` on
+  every start. The required keys (approval policy, sandbox mode, project
+  trust) are now written only when the file is missing, so `[mcp_servers.*]`
+  entries added via `codex mcp add` survive agent restarts.
 
 ## [0.1.6] — 2026-05-25
 

@@ -87,6 +87,7 @@ cmd_doctor() {
     doctor_check_cmd jq        jq        jq
     doctor_check_cmd python3   python3   python3
     doctor_check_cmd curl      curl      curl
+    doctor_check_cmd sqlite3   sqlite3   sqlite3
     doctor_check_cmd sudo      sudo
     doctor_check_cmd systemctl systemctl
     doctor_check_cmd journalctl journalctl

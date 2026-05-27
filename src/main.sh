@@ -134,6 +134,19 @@ Auth (lower-level; the dashboard uses these — prefer 'account' for human-drive
   5dive agent auth submit <session_id> --code=<callback>     # paste the claude callback code
   5dive agent auth cancel <session_id>
 
+Tasks (shared queue, sqlite — any agent, no sudo):
+  5dive task add <title...> [--priority=low|medium|high|urgent] [--assignee=<agent>] [--parent=<id>]
+  5dive task ls [--mine] [--status=<s>] [--all]      # open work, priority-ordered
+  5dive task show|start|done|cancel|rm <id|DIVE-N>
+  5dive task assign <id|DIVE-N> <agent>
+  5dive task block <id|DIVE-N> --by=<id|DIVE-N>
+  # full surface: 5dive task --help
+
+Org chart (who reports to whom):
+  5dive org set <agent> --manager=<agent> [--role=<text>] [--title=<text>]
+  5dive org tree | show <agent> | ls | rm <agent>
+  # full surface: 5dive org --help
+
 Health:
   5dive doctor [--repair] [--category=deps|types|auth|registry|shelld]
     Walks deps (tmux/jq/bun/python3/nvm/node/npm), type bins, live auth
@@ -334,6 +347,14 @@ main() {
     watch)
       # Live multi-agent dashboard (htop-style). Read-only — no audit, no lock.
       cmd_watch "$@" ;;
+    task)
+      # Shared task queue (sqlite). Group-writable store, so no root/lock and
+      # no audit — these are high-frequency, low-risk ops any agent runs. SQLite
+      # serializes its own writes (busy_timeout) so with_registry_lock isn't needed.
+      cmd_task "$@" ;;
+    org)
+      # Agent org chart (sqlite, same store as tasks). Read/write, no audit/lock.
+      cmd_org "$@" ;;
     init)
       # Interactive first-run wizard: pick a type → install → auth → create
       # → "send hello". Calls back into the same CLI for each step.

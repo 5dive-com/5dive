@@ -1,0 +1,195 @@
+
+# -------- tasks + org store (sqlite) --------
+#
+# A light, host-shared task queue + agent org-chart, kept SEPARATE from the
+# root-only agent registry. It lives in a GROUP-WRITABLE subdir so any agent
+# (every agent-<x> user is in group `claude`) can add/list/update tasks
+# WITHOUT sudo — these are high-frequency, low-risk operations, unlike
+# `agent create` which provisions Linux users and stays root-only.
+#
+# Storage: /var/lib/5dive/tasks/tasks.db (sqlite, WAL). The dir is 2770
+# root:claude (setgid) and we run under umask 0002 so the .db plus its
+# -wal/-shm sidecars stay group-writable for the next agent's connection.
+
+TASKS_DIR="${STATE_DIR}/tasks"
+TASKS_DB="${TASKS_DIR}/tasks.db"
+
+# Quote an arbitrary string as a SQL literal: double embedded single quotes
+# and wrap. The sqlite3 CLI has no ergonomic bind-parameter path from bash,
+# so this is the safe way to inline a shell value — use it for EVERY
+# user-supplied TEXT value to keep injection impossible.
+sqlq() {
+  local s=${1//\'/\'\'}
+  printf "'%s'" "$s"
+}
+
+# SQL NULL for empty input, otherwise a quoted literal.
+sqlq_or_null() {
+  [[ -z "${1:-}" ]] && { printf 'NULL'; return; }
+  sqlq "$1"
+}
+
+# Agents can't apt-install, so route a missing binary to the repair path
+# rather than a raw "sqlite3: command not found".
+require_sqlite() {
+  command -v sqlite3 >/dev/null 2>&1 || fail "$E_NOT_INSTALLED" \
+    "sqlite3 not installed — run: sudo 5dive doctor --repair  (or: sudo apt-get install -y sqlite3)"
+}
+
+# Idempotent schema. CREATE IF NOT EXISTS throughout, so re-applying it on
+# every command is cheap and self-heals a fresh box. DIVE-N idents come from
+# a trigger off the autoincrement rowid.
+_tasks_schema() {
+  cat <<'SQL'
+PRAGMA journal_mode=WAL;
+PRAGMA foreign_keys=ON;
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ident       TEXT UNIQUE,
+  title       TEXT NOT NULL,
+  body        TEXT,
+  status      TEXT NOT NULL DEFAULT 'todo',
+  priority    TEXT NOT NULL DEFAULT 'medium',
+  assignee    TEXT,
+  created_by  TEXT,
+  parent_id   INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  started_at  TEXT,
+  done_at     TEXT,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS task_deps (
+  task_id     INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  blocked_by  INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  PRIMARY KEY (task_id, blocked_by)
+);
+
+CREATE TABLE IF NOT EXISTS agents_org (
+  name        TEXT PRIMARY KEY,
+  reports_to  TEXT REFERENCES agents_org(name) ON DELETE SET NULL,
+  role        TEXT,
+  title       TEXT,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS tasks_status_idx   ON tasks(status);
+CREATE INDEX IF NOT EXISTS tasks_assignee_idx ON tasks(assignee, status);
+CREATE INDEX IF NOT EXISTS tasks_parent_idx   ON tasks(parent_id);
+
+CREATE TRIGGER IF NOT EXISTS tasks_ident_ai AFTER INSERT ON tasks
+WHEN NEW.ident IS NULL
+BEGIN
+  UPDATE tasks SET ident='DIVE-'||NEW.id WHERE id=NEW.id;
+END;
+
+-- Touch updated_at on change. The WHEN guard stops the trigger recursing on
+-- its own write (it only fires when updated_at wasn't itself just changed).
+CREATE TRIGGER IF NOT EXISTS tasks_touch_au AFTER UPDATE ON tasks
+WHEN OLD.updated_at = NEW.updated_at
+BEGIN
+  UPDATE tasks SET updated_at=datetime('now') WHERE id=NEW.id;
+END;
+
+-- The "organized view" behind `task ls`: open work, priority then age.
+CREATE VIEW IF NOT EXISTS task_board AS
+  SELECT ident, status, priority, COALESCE(assignee,'-') AS assignee,
+         title, COALESCE(created_by,'-') AS created_by, created_at, id
+  FROM tasks
+  WHERE status NOT IN ('done','cancelled')
+  ORDER BY CASE priority
+             WHEN 'urgent' THEN 0 WHEN 'high' THEN 1
+             WHEN 'medium' THEN 2 ELSE 3 END,
+           created_at;
+SQL
+}
+
+# Create the group-writable tasks dir + db and apply the schema. Safe to call
+# repeatedly; command functions call it first. If the dir is missing and we
+# aren't root we can't create it (parent /var/lib/5dive is 2750), so emit a
+# one-time bootstrap hint instead of a cryptic failure.
+tasks_db_init() {
+  require_sqlite
+  umask 0002
+  if [[ ! -d "$TASKS_DIR" ]]; then
+    if [[ $EUID -eq 0 ]]; then
+      mkdir -p "$TASKS_DIR"
+      chown root:claude "$TASKS_DIR"
+      chmod 2770 "$TASKS_DIR"
+    else
+      fail "$E_PERMISSION" "tasks store not initialised — run once: sudo 5dive task init"
+    fi
+  fi
+  # Apply the schema only when the db is uninitialised. Re-running it on every
+  # command would take a write lock each time and, under concurrent agents,
+  # collide ("database is locked"); a cheap read of sqlite_master takes only a
+  # WAL read-lock, which never blocks writers. .timeout lets a genuine
+  # first-run race serialise instead of erroring. stdout is discarded because
+  # `PRAGMA journal_mode=WAL` echoes "wal".
+  local has
+  has=$(sqlite3 -cmd ".timeout 5000" "$TASKS_DB" \
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks' LIMIT 1;" 2>/dev/null)
+  if [[ "$has" != "1" ]]; then
+    sqlite3 -cmd ".timeout 5000" "$TASKS_DB" < <(_tasks_schema) >/dev/null \
+      || fail "$E_GENERIC" "failed to initialise tasks db at $TASKS_DB"
+    chmod 0660 "$TASKS_DB" 2>/dev/null || true
+  fi
+}
+
+# Per-connection setup, passed via -cmd / .timeout so it produces NO output
+# rows (an inline `PRAGMA busy_timeout=N;` echoes the value, which would
+# corrupt anything that captures a query result). .timeout makes concurrent
+# agent writers retry instead of erroring with "database is locked";
+# foreign_keys=ON enables the ON DELETE cascades.
+db() {
+  umask 0002
+  sqlite3 -cmd ".timeout 5000" -cmd "PRAGMA foreign_keys=ON" "$TASKS_DB" "$1"
+}
+
+# Formatted read: dbfmt <sqlite-flag> "<sql>"  (e.g. -box, -json, -line).
+dbfmt() {
+  umask 0002
+  sqlite3 -cmd ".timeout 5000" -cmd "PRAGMA foreign_keys=ON" "$1" "$TASKS_DB" "$2"
+}
+
+# Resolve a task ref (numeric id or DIVE-N) into the global RESOLVED_TASK_ID,
+# or fail. Sets a global rather than echoing so the `fail` error path runs in
+# the caller's shell (not a $() subshell) — otherwise a --json error envelope
+# would be captured into the caller's var instead of reaching stdout. Shape is
+# validated before anything touches SQL.
+RESOLVED_TASK_ID=""
+resolve_task_id() {
+  local ref="$1" id
+  if [[ "$ref" =~ ^[0-9]+$ ]]; then
+    id="$ref"
+  elif [[ "$ref" =~ ^[Dd][Ii][Vv][Ee]-([0-9]+)$ ]]; then
+    id="${BASH_REMATCH[1]}"
+  else
+    fail "$E_VALIDATION" "bad task ref '$ref' (expected <number> or DIVE-<number>)"
+  fi
+  local found
+  found=$(db "SELECT id FROM tasks WHERE id=${id};")
+  [[ -n "$found" ]] || fail "$E_NOT_FOUND" "no such task: $ref"
+  RESOLVED_TASK_ID="$id"
+}
+
+# Who is acting: --from wins, else infer from SUDO_USER (sudo path) or $USER
+# (agent running directly as agent-<x>), else the literal "cli".
+task_actor() {
+  local from="${1:-}"
+  [[ -n "$from" ]] && { printf '%s' "$from"; return; }
+  local s; s=$(auto_sender_from_sudo)
+  [[ -n "$s" ]] && { printf '%s' "$s"; return; }
+  local u="${USER:-$(id -un 2>/dev/null)}"
+  [[ "$u" == agent-* ]] && { printf '%s' "${u#agent-}"; return; }
+  printf 'cli'
+}
+
+valid_task_status()   { [[ "$1" =~ ^(todo|in_progress|blocked|done|cancelled)$ ]]; }
+valid_task_priority() { [[ "$1" =~ ^(low|medium|high|urgent)$ ]]; }
+
+# Indent every line of stdin by two spaces. Used for the nested lists in
+# `task show` / `org show`; a plain `printf '  %s\n' "$var"` only indents the
+# first line, and unquoting splits values that contain spaces (task titles).
+indent2() { while IFS= read -r _l; do printf '  %s\n' "$_l"; done; }

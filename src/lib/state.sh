@@ -27,6 +27,14 @@ ensure_state() {
   [[ -f "$REGISTRY_LOCK" ]] || : > "$REGISTRY_LOCK"
   chown root:claude "$REGISTRY_LOCK"
   chmod 640 "$REGISTRY_LOCK"
+  # Group-writable tasks/org store (unlike the rest of STATE_DIR, which is
+  # root-only): the shared task queue is meant to be used by every agent
+  # without sudo. 2770 + setgid keeps the db and its -wal/-shm sidecars
+  # owned by group claude and writable across agent users. tasks_db_init
+  # (re)applies the schema lazily on first use.
+  mkdir -p "$TASKS_DIR"
+  chown root:claude "$TASKS_DIR"
+  chmod 2770 "$TASKS_DIR"
   audit_init
 }
 
