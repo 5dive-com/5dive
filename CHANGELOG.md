@@ -9,6 +9,17 @@ release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `5dive-agent-start` now dispatches `grok` and `antigravity`, fixing a
+  crash-loop regression (`unknown AGENT_TYPE: grok|antigravity`). Both types
+  were already first-class everywhere else in the CLI (`TYPE_BIN`, installer,
+  auth, `agent create`), but the systemd launcher's case statement never got
+  the matching branches — so `agent create --type=grok` succeeded, then the
+  unit exited 2 on every spawn, racking up thousands of restarts. The
+  per-type credential scrub also covers them now (same posture as
+  hermes/openclaw — OAuth-via-file, no provider env vars).
+
 ### Added
 
 - Inter-agent mirror can post into a forum topic: when the group entry in

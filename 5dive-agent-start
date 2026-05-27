@@ -52,6 +52,14 @@ case "$TYPE" in
   codex)    BIN="/home/claude/.nvm/versions/node/v24/bin/codex"; ARGS=() ;;
   gemini)   BIN="/home/claude/.nvm/versions/node/v24/bin/gemini"; ARGS=(--skip-trust --yolo) ;;
   opencode) BIN="/home/claude/.local/bin/opencode"; ARGS=() ;;
+  # antigravity ships as `agy` (Google's native-Go gemini-cli successor). The
+  # type id stays "antigravity" everywhere (agents.d/<name>.env, TYPE_BIN,
+  # auth dispatch); only the on-disk binary is named agy. Bare launch — the
+  # interactive TUI starts without args.
+  antigravity) BIN="/home/claude/.local/bin/agy"; ARGS=() ;;
+  # grok is xAI's CLI; the installer symlinks ~/.grok/bin/grok to
+  # ~/.local/bin/grok. Bare launch — interactive UI starts without args.
+  grok)     BIN="/home/claude/.local/bin/grok"; ARGS=() ;;
   *) echo "unknown AGENT_TYPE: $TYPE" >&2; exit 2 ;;
 esac
 
@@ -376,6 +384,10 @@ case "$TYPE" in
     UNSET_CREDS="CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY" ;;
   hermes|openclaw)
     # OAuth via auth.json — no provider env vars belong here.
+    UNSET_CREDS="CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY GOOGLE_API_KEY" ;;
+  antigravity|grok)
+    # OAuth via auth file (~/.gemini/antigravity-cli/* and ~/.grok/auth.json).
+    # Same cross-provider leak posture as hermes/openclaw — drop everything.
     UNSET_CREDS="CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY GOOGLE_API_KEY" ;;
   *)
     UNSET_CREDS="" ;;
