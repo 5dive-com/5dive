@@ -140,11 +140,26 @@ JSON
   install_default_skill_for_agent "$name" claude 5dive-com/skills 5dive-cli || true
 }
 
-# Install one skill into an agent user's per-type skills dir via npx. Looks
-# up SKILLS_AGENT_ID[$type] for `--agent <id>` and SKILLS_INSTALL_DIR[$type]
-# for the post-install dir-presence check. Idempotent: skips if the target
-# dir already exists. Returns non-zero on any failure so callers can decide
-# whether to fail loudly or warn.
+# Types that `npx skills add --agent <id>` doesn't recognize. The upstream
+# vercel-labs/skills CLI gates --agent against a hardcoded registry; passing
+# an unknown id fails with "Invalid agents: <id>" (verified for grok 0.x).
+# We fall back to a manual git-clone + cp for these, landing the skill at
+# $HOME/${SKILLS_INSTALL_DIR[$type]}/<skill> just like the upstream installer
+# would. Add new types here when upstream rejects them.
+_skill_needs_manual_install() {
+  local type="$1"
+  case "$type" in
+    grok) return 0 ;;
+    *)    return 1 ;;
+  esac
+}
+
+# Install one skill into an agent user's per-type skills dir. Routes through
+# `npx skills add --agent <id>` for upstream-supported types, and falls back
+# to a direct git-clone + cp -r for types upstream rejects (see
+# _skill_needs_manual_install). Idempotent: skips if the target dir already
+# exists. Returns non-zero on any failure so callers can decide whether to
+# fail loudly or warn.
 install_default_skill_for_agent() {
   local name="$1" type="$2" source="$3" skill="$4"
   local user="agent-${name}" home="/home/agent-${name}"
@@ -153,6 +168,26 @@ install_default_skill_for_agent() {
   [[ -d "$home" ]] || return 1
   id -u "$user" &>/dev/null || return 1
   if sudo -u "$user" test -d "$home/$install_dir/$skill"; then
+    return 0
+  fi
+  if _skill_needs_manual_install "$type"; then
+    sudo -u "$user" -H env SOURCE="$source" SKILL="$skill" INSTALL_DIR="$install_dir" bash -s >&2 <<'MANUAL_SKILL' \
+      || { warn "default skill '$skill' install failed for agent '$name' (continuing)"; return 1; }
+set -uo pipefail
+unset CLAUDE_CONFIG_DIR
+cd "$HOME"
+TMPDIR=$(mktemp -d -t skill-XXXXXX)
+trap 'rm -rf "$TMPDIR"' EXIT
+timeout 60 git clone --depth=1 "https://github.com/$SOURCE.git" "$TMPDIR/repo" >/dev/null 2>&1
+SRC_DIR=""
+for d in "$TMPDIR/repo/$SKILL" "$TMPDIR/repo/skills/$SKILL"; do
+  if [ -f "$d/SKILL.md" ]; then SRC_DIR="$d"; break; fi
+done
+[ -n "$SRC_DIR" ] || { echo "ERROR: skill '$SKILL' not found in $SOURCE (looked at top-level and skills/)" >&2; exit 1; }
+mkdir -p "$HOME/$INSTALL_DIR"
+cp -r "$SRC_DIR" "$HOME/$INSTALL_DIR/$SKILL"
+echo "manual-installed $SKILL → $HOME/$INSTALL_DIR/$SKILL"
+MANUAL_SKILL
     return 0
   fi
   sudo -u "$user" -H env SOURCE="$source" SKILL="$skill" AGENT_ID="$agent_id" bash -s >&2 <<'DEFAULT_SKILL' \
@@ -734,6 +769,24 @@ GROK_ENV
   if [[ -n "$allowed_users" ]]; then
     seed_grok_telegram_access "$name" "$allowed_users"
   fi
+
+  # Seed the notify-user skill into ~/.grok/skills so the agent self-starts
+  # its comms loop on first DM. Mirrors what preseed_claude_agent does for
+  # claude-channel=telegram agents; grok has no claude-style plugin marketplace,
+  # but it does read ~/.grok/skills/*/SKILL.md natively, so a direct copy is
+  # all that's needed.
+  if [[ -f "$AGENT_SKILLS_DIR/notify-user/SKILL.md" ]]; then
+    sudo -u "$user" mkdir -p "/home/${user}/.grok/skills/notify-user"
+    sudo -u "$user" cp "$AGENT_SKILLS_DIR/notify-user/SKILL.md" \
+      "/home/${user}/.grok/skills/notify-user/SKILL.md"
+  fi
+
+  # Default skills, best-effort: match the claude-side install in
+  # preseed_claude_agent so grok agents get find-skills + 5dive-cli too.
+  # Upstream `npx skills add` doesn't recognize --agent grok, so these
+  # route through the manual-install fallback in install_default_skill_for_agent.
+  install_default_skill_for_agent "$name" grok vercel-labs/skills find-skills || true
+  install_default_skill_for_agent "$name" grok 5dive-com/skills 5dive-cli || true
 }
 
 # Write ~/.grok/channels/telegram/access.json for agent-<name> with allowFrom

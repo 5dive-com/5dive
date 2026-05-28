@@ -100,6 +100,43 @@ cmd_skill_add() {
   # inaccessible to them and the claude binary can't be found on PATH.
   # For those agents we run the install as root (which has full access)
   # with HOME overridden to the agent's own home, then re-own the result.
+  #
+  # Manual-install types (grok today, see _skill_needs_manual_install in
+  # lib/agent_setup.sh): upstream `npx skills add` rejects --agent grok with
+  # "Invalid agents: grok", so we git-clone + cp -r the skill dir directly
+  # into $HOME/$INSTALL_DIR. Bypasses the sandboxed branch too — git is
+  # available everywhere npm/npx is.
+  if _skill_needs_manual_install "$type"; then
+    local run_as="sudo -u $user -H"
+    [[ "$isolation" == "sandboxed" ]] && run_as=""
+    if ! $run_as env HOME="$home" SOURCE="$source" SKILL="$skill" INSTALL_DIR="$install_dir" bash -s >&2 <<'SKILL_ADD_MANUAL'
+set -euo pipefail
+unset CLAUDE_CONFIG_DIR
+cd "$HOME"
+TMPDIR=$(mktemp -d -t skill-XXXXXX)
+trap 'rm -rf "$TMPDIR"' EXIT
+timeout 60 git clone --depth=1 "https://github.com/$SOURCE.git" "$TMPDIR/repo" >/dev/null 2>&1
+SRC_DIR=""
+for d in "$TMPDIR/repo/$SKILL" "$TMPDIR/repo/skills/$SKILL"; do
+  if [ -f "$d/SKILL.md" ]; then SRC_DIR="$d"; break; fi
+done
+[ -n "$SRC_DIR" ] || { echo "ERROR: skill '$SKILL' not found in $SOURCE (looked at top-level and skills/)" >&2; exit 1; }
+mkdir -p "$HOME/$INSTALL_DIR"
+rm -rf "$HOME/$INSTALL_DIR/$SKILL"
+cp -r "$SRC_DIR" "$HOME/$INSTALL_DIR/$SKILL"
+[ -d "$HOME/$INSTALL_DIR/$SKILL" ] || { echo "ERROR: $INSTALL_DIR/$SKILL missing after install" >&2; exit 1; }
+echo "manual-installed $SKILL → $HOME/$INSTALL_DIR/$SKILL"
+SKILL_ADD_MANUAL
+    then
+      fail "$E_GENERIC" "skill install failed for '$skill' on agent '$name'"
+    fi
+    [[ "$isolation" == "sandboxed" ]] && chown -R "${user}:${user}" "$home/$install_dir/$skill" 2>/dev/null || true
+    ok "skill '$skill' installed for agent '$name'." \
+       '{name:$n, source:$s, skill:$k, agent:$a, action:"add", strategy:"manual"}' \
+       --arg n "$name" --arg s "$source" --arg k "$skill" --arg a "$agent_id"
+    return 0
+  fi
+
   if [[ "$isolation" == "sandboxed" ]]; then
     if ! HOME="$home" \
          SOURCE="$source" SKILL="$skill" AGENT_ID="$agent_id" INSTALL_DIR="$install_dir" \

@@ -223,6 +223,38 @@ TOML
   CODEX_OVERRIDE="export CODEX_HOME=$(printf %q "$AGENT_CODEX_HOME"); "
 fi
 
+# Grok stores OAuth tokens in $HOME/.grok/auth.json (mode 0600). Same shared/
+# 0600 problem as codex: the host-level shared copy at /home/claude/.grok/
+# auth.json is owned by `claude` and unreadable to agent-<name> even though
+# it's in the claude group. Seed the agent's own ~/.grok/auth.json from the
+# shared file via sudo, re-seeding only when the shared copy is newer (so a
+# host-side `5dive auth login grok` propagates on the next agent restart).
+# Unlike codex, grok has no *_HOME env var — it always reads $HOME/.grok —
+# so no per-agent CODEX_HOME-style override is needed. With a profile, the
+# source is $PROFILE_STATE_DIR/.grok/auth.json (matches profile_type_auth_path
+# in src/cmd_auth.sh).
+if [[ "$TYPE" == "grok" ]]; then
+  AGENT_GROK_HOME="$HOME/.grok"
+  install -d -m 700 "$AGENT_GROK_HOME"
+  SHARED_GROK_AUTH="${PROFILE_STATE_DIR:+$PROFILE_STATE_DIR/.grok/auth.json}"
+  SHARED_GROK_AUTH="${SHARED_GROK_AUTH:-/home/claude/.grok/auth.json}"
+  LOCAL_GROK_AUTH="$AGENT_GROK_HOME/auth.json"
+  # Profile dirs are mode 0700 owner=claude, so a naive `[[ -e ]]` returns
+  # false because agent-<name> can't traverse it. Route both checks through
+  # `sudo -n test` (same fix as the hermes/openclaw seeds below).
+  if sudo -n test -e "$SHARED_GROK_AUTH" 2>/dev/null \
+     && { [[ ! -f "$LOCAL_GROK_AUTH" ]] || sudo -n test "$SHARED_GROK_AUTH" -nt "$LOCAL_GROK_AUTH"; }; then
+    TMP="$(mktemp -p "$AGENT_GROK_HOME" .auth.XXXXXX)"
+    if sudo -n cat "$SHARED_GROK_AUTH" > "$TMP" 2>/dev/null; then
+      chmod 600 "$TMP"
+      mv "$TMP" "$LOCAL_GROK_AUTH"
+    else
+      rm -f "$TMP"
+      echo "warn: could not seed grok auth.json from $SHARED_GROK_AUTH" >&2
+    fi
+  fi
+fi
+
 # Wire the telegram-grok MCP server + lifecycle hooks for this grok agent
 # when channels=telegram. Same shape as the codex block above: a single shared
 # plugin checkout serves every grok agent (server.ts + hooks resolve state

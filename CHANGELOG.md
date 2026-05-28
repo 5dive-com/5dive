@@ -9,6 +9,30 @@ release.
 
 ## [Unreleased]
 
+## [0.1.13] — 2026-05-28
+
+### Fixed
+
+- Three `grok` provisioning gaps surfaced by a live smoke test:
+  - `5dive-agent-start` now seeds `/home/agent-<name>/.grok/auth.json` from
+    `/home/claude/.grok/auth.json` (or `$PROFILE_STATE_DIR/.grok/auth.json`
+    under a bound profile) at every boot. Previously the auth-gate in
+    `cmd_create` passed because the type-level shared credential satisfied
+    it, but the agent's own `~/.grok/auth.json` was never populated — so
+    grok couldn't actually talk to xAI on first launch. Mirrors the codex
+    seed block; mtime-gated so host-side `5dive auth login grok`
+    re-rotations propagate on the next agent restart.
+  - `install_channel_for_grok_agent` now copies `notify-user/SKILL.md` into
+    `~/.grok/skills/notify-user/` for `--channels=telegram` agents, so the
+    comms loop self-starts on the first DM (no manual nudge needed).
+    Mirrors the claude-side seed in `preseed_claude_agent`.
+  - Default skills `find-skills` + `5dive-cli` now install for grok agents
+    too. Upstream `npx skills add` rejects `--agent grok` with "Invalid
+    agents: grok", so a new manual-install fallback (`git clone --depth=1`
+    + `cp -r`) in `install_default_skill_for_agent` and `cmd_skill_add`
+    handles types upstream doesn't recognize. `_skill_needs_manual_install`
+    is the single switch — add new types there when upstream rejects them.
+
 ## [0.1.12] — 2026-05-28
 
 ### Fixed
