@@ -26,7 +26,7 @@ esac
 
 # Bumped on every public release. `build.sh` checks this line exists; CI fails
 # the bundle-drift check if it's missing or empty.
-readonly FIVE_VERSION="0.1.11"
+readonly FIVE_VERSION="0.1.12"
 
 STATE_DIR="/var/lib/5dive"
 REGISTRY="${STATE_DIR}/agents.json"
@@ -164,7 +164,13 @@ declare -A TYPE_AUTH=(
 # (caller must hand-install). Idempotent: each recipe checks first.
 declare -A TYPE_INSTALL=(
   [claude]="command -v claude >/dev/null || curl -fsSL https://claude.ai/install.sh | bash"
-  [codex]="command -v codex >/dev/null || npm install -g @openai/codex"
+  # Verify the EXACT TYPE_BIN path (not `command -v codex`): a stray
+  # /usr/bin/codex from apt or a codex left over under a non-v24 nvm major
+  # would short-circuit the install, leaving v24/bin/codex empty and
+  # surfacing as "install reported success but bin missing". `nvm use 24`
+  # forces npm install -g to land in v24's bin dir even when the default
+  # alias has drifted.
+  [codex]="[[ -x /home/claude/.nvm/versions/node/v24/bin/codex ]] || { . /home/claude/.nvm/nvm.sh && nvm use 24 >/dev/null && npm install -g @openai/codex; }"
   # opencode.ai's installer drops the binary at ~/.opencode/bin/opencode and
   # only adds it to PATH via .bashrc — but bash -lc skips .bashrc on
   # non-interactive shells, so neither the verify check below nor the agent

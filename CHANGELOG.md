@@ -9,6 +9,20 @@ release.
 
 ## [Unreleased]
 
+## [0.1.12] — 2026-05-28
+
+### Fixed
+
+- `agent create codex` (and `agent install codex`) on hosts where a stray
+  `codex` binary lives outside `/home/claude/.nvm/versions/node/v24/bin/`
+  (e.g. `/usr/bin/codex` from apt, or under a non-v24 nvm major after
+  `nvm install N` drifted the default alias). The previous recipe
+  short-circuited on `command -v codex`, so npm install never ran and
+  `cmd_install` then reported "install reported success but bin missing".
+  Recipe now checks the exact `TYPE_BIN[codex]` path and forces
+  `nvm use 24` before `npm install -g @openai/codex` so the bin always
+  lands where downstream services expect it.
+
 ## [0.1.11] — 2026-05-28
 
 ### Added
