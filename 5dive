@@ -26,7 +26,7 @@ esac
 
 # Bumped on every public release. `build.sh` checks this line exists; CI fails
 # the bundle-drift check if it's missing or empty.
-readonly FIVE_VERSION="0.1.16"
+readonly FIVE_VERSION="0.1.17"
 
 STATE_DIR="/var/lib/5dive"
 REGISTRY="${STATE_DIR}/agents.json"
@@ -1677,7 +1677,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   started_at  TEXT,
   done_at     TEXT,
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Result text captured at close time via `5dive task done <id> --result=…`.
+  -- Lets dashboard + creators read what the assignee produced without
+  -- scraping the tmux pane. NULL for open tasks + legacy rows closed before
+  -- the column existed.
+  result      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS task_deps (
@@ -1754,6 +1759,22 @@ tasks_db_init() {
     sqlite3 -cmd ".timeout 5000" "$TASKS_DB" < <(_tasks_schema) >/dev/null \
       || fail "$E_GENERIC" "failed to initialise tasks db at $TASKS_DB"
     chmod 0660 "$TASKS_DB" 2>/dev/null || true
+  else
+    _tasks_db_migrate
+  fi
+}
+
+# Idempotent additive migrations for already-initialised stores. sqlite has
+# no `ADD COLUMN IF NOT EXISTS`, so we check pragma_table_info first. Each
+# migration is a one-shot check + ALTER; running it on every init is cheap
+# (single PRAGMA read). Add new column migrations to the array below.
+_tasks_db_migrate() {
+  local cols
+  cols=$(sqlite3 -cmd ".timeout 5000" "$TASKS_DB" \
+         "SELECT name FROM pragma_table_info('tasks');" 2>/dev/null)
+  if ! printf '%s\n' "$cols" | grep -qx 'result'; then
+    sqlite3 -cmd ".timeout 5000" "$TASKS_DB" \
+      "ALTER TABLE tasks ADD COLUMN result TEXT;" >/dev/null 2>&1 || true
   fi
 }
 
@@ -7493,8 +7514,8 @@ _task_usage() {
   5dive task show <id|DIVE-N>                        # full detail + subtasks + blockers
   5dive task assign <id|DIVE-N> <agent>
   5dive task start  <id|DIVE-N>                      # -> in_progress
-  5dive task done   <id|DIVE-N>                      # -> done
-  5dive task cancel <id|DIVE-N>                      # -> cancelled
+  5dive task done   <id|DIVE-N> [--result=<text>]    # -> done; --result captures the agent's response
+  5dive task cancel <id|DIVE-N> [--result=<text>]    # -> cancelled; --result captures why
   5dive task block   <id|DIVE-N> --by=<id|DIVE-N>    # add a blocks edge, mark blocked
   5dive task unblock <id|DIVE-N> [--by=<id|DIVE-N>]  # drop edge(s); back to todo if clear
   5dive task rm <id|DIVE-N>                          # delete (cascades subtasks + edges)
@@ -7592,7 +7613,7 @@ cmd_task_ls() {
   local order="ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at"
   if (( JSON_MODE )); then
     local rows
-    rows=$(dbfmt -json "SELECT id, ident, title, status, priority, assignee, created_by, parent_id, created_at FROM tasks WHERE ${where} ${order};")
+    rows=$(dbfmt -json "SELECT id, ident, title, status, priority, assignee, created_by, parent_id, created_at, done_at, body, result FROM tasks WHERE ${where} ${order};")
     [[ -n "$rows" ]] || rows="[]"
     jq -cn --argjson r "$rows" '{ok:true, data:{tasks:$r}}'
   else
@@ -7614,7 +7635,7 @@ cmd_task_show() {
     jq -cn --argjson t "$task" --argjson s "$subs" --argjson b "$deps" \
       '{ok:true, data:{task:($t[0]), subtasks:$s, blocked_by:$b}}'
   else
-    dbfmt -line "SELECT ident, title, status, priority, assignee, created_by, parent_id, created_at, started_at, done_at, body FROM tasks WHERE id=${id};"
+    dbfmt -line "SELECT ident, title, status, priority, assignee, created_by, parent_id, created_at, started_at, done_at, body, result FROM tasks WHERE id=${id};"
     local subs
     subs=$(db "SELECT ident||'  ['||status||']  '||title FROM tasks WHERE parent_id=${id} ORDER BY id;")
     [[ -n "$subs" ]] && { echo; echo "subtasks:"; printf '%s\n' "$subs" | indent2; }
@@ -7636,9 +7657,24 @@ cmd_task_assign() {
 _task_status_cmd() {
   local newstatus="$1" extra="$2" verb="$3"; shift 3
   tasks_db_init
-  [[ $# -gt 0 ]] || fail "$E_USAGE" "usage: 5dive task $verb <id|DIVE-N>"
-  resolve_task_id "$1"; local id="$RESOLVED_TASK_ID"
-  db "UPDATE tasks SET status=$(sqlq "$newstatus")${extra} WHERE id=${id};"
+  local result="" want_result=0
+  local -a positional=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --result=*) result="${1#*=}"; want_result=1 ;;
+      --)         shift; positional+=("$@"); break ;;
+      -*)         fail "$E_USAGE" "unknown flag: $1" ;;
+      *)          positional+=("$1") ;;
+    esac
+    shift
+  done
+  [[ ${#positional[@]} -gt 0 ]] || fail "$E_USAGE" "usage: 5dive task $verb <id|DIVE-N> [--result=<text>]"
+  resolve_task_id "${positional[0]}"; local id="$RESOLVED_TASK_ID"
+  local set_result=""
+  if (( want_result )); then
+    set_result=", result=$(sqlq_or_null "$result")"
+  fi
+  db "UPDATE tasks SET status=$(sqlq "$newstatus")${extra}${set_result} WHERE id=${id};"
   ok "DIVE-$id $verb" '{id:($i|tonumber), status:$s}' --arg i "$id" --arg s "$newstatus"
 }
 
@@ -8082,7 +8118,7 @@ _hb_wake() {
     sleep 4
   fi
 
-  local nudge="Heartbeat tick. You have ${todo} open task(s) assigned to you on the shared 5dive board. Do exactly ONE now: run '5dive task ls --mine' to list them, pick the single highest-priority todo, claim it with '5dive task start <id>', do the work, then close it with '5dive task done <id>'. Handle only ONE task this turn — when it's done, stop and wait; the heartbeat wakes you again for the next one. If a task is blocked or unclear, note it via 5dive task and move on without starting more."
+  local nudge="Heartbeat tick. You have ${todo} open task(s) assigned to you on the shared 5dive board. Do exactly ONE now: run '5dive task ls --mine' to list them, pick the single highest-priority todo, claim it with '5dive task start <id>', do the work, then close it with '5dive task done <id> --result=\"<one or two sentences summarising what you produced — any output the creator needs to see>\"'. The --result text is what the dashboard and the task creator read — make it self-contained. Handle only ONE task this turn — when it's done, stop and wait; the heartbeat wakes you again for the next one. If a task is blocked or unclear, close it with '5dive task cancel <id> --result=\"<why>\"' (or mark blocked via 5dive task block) and move on without starting more."
   _hb_send_line "$name" "$nudge" || { _hb_log "[$name] nudge send failed"; return 1; }
   return 0
 }

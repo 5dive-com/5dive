@@ -210,7 +210,7 @@ _hb_wake() {
     sleep 4
   fi
 
-  local nudge="Heartbeat tick. You have ${todo} open task(s) assigned to you on the shared 5dive board. Do exactly ONE now: run '5dive task ls --mine' to list them, pick the single highest-priority todo, claim it with '5dive task start <id>', do the work, then close it with '5dive task done <id>'. Handle only ONE task this turn — when it's done, stop and wait; the heartbeat wakes you again for the next one. If a task is blocked or unclear, note it via 5dive task and move on without starting more."
+  local nudge="Heartbeat tick. You have ${todo} open task(s) assigned to you on the shared 5dive board. Do exactly ONE now: run '5dive task ls --mine' to list them, pick the single highest-priority todo, claim it with '5dive task start <id>', do the work, then close it with '5dive task done <id> --result=\"<one or two sentences summarising what you produced — any output the creator needs to see>\"'. The --result text is what the dashboard and the task creator read — make it self-contained. Handle only ONE task this turn — when it's done, stop and wait; the heartbeat wakes you again for the next one. If a task is blocked or unclear, close it with '5dive task cancel <id> --result=\"<why>\"' (or mark blocked via 5dive task block) and move on without starting more."
   _hb_send_line "$name" "$nudge" || { _hb_log "[$name] nudge send failed"; return 1; }
   return 0
 }

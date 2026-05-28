@@ -13,8 +13,8 @@ _task_usage() {
   5dive task show <id|DIVE-N>                        # full detail + subtasks + blockers
   5dive task assign <id|DIVE-N> <agent>
   5dive task start  <id|DIVE-N>                      # -> in_progress
-  5dive task done   <id|DIVE-N>                      # -> done
-  5dive task cancel <id|DIVE-N>                      # -> cancelled
+  5dive task done   <id|DIVE-N> [--result=<text>]    # -> done; --result captures the agent's response
+  5dive task cancel <id|DIVE-N> [--result=<text>]    # -> cancelled; --result captures why
   5dive task block   <id|DIVE-N> --by=<id|DIVE-N>    # add a blocks edge, mark blocked
   5dive task unblock <id|DIVE-N> [--by=<id|DIVE-N>]  # drop edge(s); back to todo if clear
   5dive task rm <id|DIVE-N>                          # delete (cascades subtasks + edges)
@@ -112,7 +112,7 @@ cmd_task_ls() {
   local order="ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at"
   if (( JSON_MODE )); then
     local rows
-    rows=$(dbfmt -json "SELECT id, ident, title, status, priority, assignee, created_by, parent_id, created_at FROM tasks WHERE ${where} ${order};")
+    rows=$(dbfmt -json "SELECT id, ident, title, status, priority, assignee, created_by, parent_id, created_at, done_at, body, result FROM tasks WHERE ${where} ${order};")
     [[ -n "$rows" ]] || rows="[]"
     jq -cn --argjson r "$rows" '{ok:true, data:{tasks:$r}}'
   else
@@ -134,7 +134,7 @@ cmd_task_show() {
     jq -cn --argjson t "$task" --argjson s "$subs" --argjson b "$deps" \
       '{ok:true, data:{task:($t[0]), subtasks:$s, blocked_by:$b}}'
   else
-    dbfmt -line "SELECT ident, title, status, priority, assignee, created_by, parent_id, created_at, started_at, done_at, body FROM tasks WHERE id=${id};"
+    dbfmt -line "SELECT ident, title, status, priority, assignee, created_by, parent_id, created_at, started_at, done_at, body, result FROM tasks WHERE id=${id};"
     local subs
     subs=$(db "SELECT ident||'  ['||status||']  '||title FROM tasks WHERE parent_id=${id} ORDER BY id;")
     [[ -n "$subs" ]] && { echo; echo "subtasks:"; printf '%s\n' "$subs" | indent2; }
@@ -156,9 +156,24 @@ cmd_task_assign() {
 _task_status_cmd() {
   local newstatus="$1" extra="$2" verb="$3"; shift 3
   tasks_db_init
-  [[ $# -gt 0 ]] || fail "$E_USAGE" "usage: 5dive task $verb <id|DIVE-N>"
-  resolve_task_id "$1"; local id="$RESOLVED_TASK_ID"
-  db "UPDATE tasks SET status=$(sqlq "$newstatus")${extra} WHERE id=${id};"
+  local result="" want_result=0
+  local -a positional=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --result=*) result="${1#*=}"; want_result=1 ;;
+      --)         shift; positional+=("$@"); break ;;
+      -*)         fail "$E_USAGE" "unknown flag: $1" ;;
+      *)          positional+=("$1") ;;
+    esac
+    shift
+  done
+  [[ ${#positional[@]} -gt 0 ]] || fail "$E_USAGE" "usage: 5dive task $verb <id|DIVE-N> [--result=<text>]"
+  resolve_task_id "${positional[0]}"; local id="$RESOLVED_TASK_ID"
+  local set_result=""
+  if (( want_result )); then
+    set_result=", result=$(sqlq_or_null "$result")"
+  fi
+  db "UPDATE tasks SET status=$(sqlq "$newstatus")${extra}${set_result} WHERE id=${id};"
   ok "DIVE-$id $verb" '{id:($i|tonumber), status:$s}' --arg i "$id" --arg s "$newstatus"
 }
 

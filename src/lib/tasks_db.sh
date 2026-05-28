@@ -57,7 +57,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   started_at  TEXT,
   done_at     TEXT,
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Result text captured at close time via `5dive task done <id> --result=…`.
+  -- Lets dashboard + creators read what the assignee produced without
+  -- scraping the tmux pane. NULL for open tasks + legacy rows closed before
+  -- the column existed.
+  result      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS task_deps (
@@ -134,6 +139,22 @@ tasks_db_init() {
     sqlite3 -cmd ".timeout 5000" "$TASKS_DB" < <(_tasks_schema) >/dev/null \
       || fail "$E_GENERIC" "failed to initialise tasks db at $TASKS_DB"
     chmod 0660 "$TASKS_DB" 2>/dev/null || true
+  else
+    _tasks_db_migrate
+  fi
+}
+
+# Idempotent additive migrations for already-initialised stores. sqlite has
+# no `ADD COLUMN IF NOT EXISTS`, so we check pragma_table_info first. Each
+# migration is a one-shot check + ALTER; running it on every init is cheap
+# (single PRAGMA read). Add new column migrations to the array below.
+_tasks_db_migrate() {
+  local cols
+  cols=$(sqlite3 -cmd ".timeout 5000" "$TASKS_DB" \
+         "SELECT name FROM pragma_table_info('tasks');" 2>/dev/null)
+  if ! printf '%s\n' "$cols" | grep -qx 'result'; then
+    sqlite3 -cmd ".timeout 5000" "$TASKS_DB" \
+      "ALTER TABLE tasks ADD COLUMN result TEXT;" >/dev/null 2>&1 || true
   fi
 }
 
