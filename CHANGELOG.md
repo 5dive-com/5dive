@@ -9,6 +9,24 @@ release.
 
 ## [Unreleased]
 
+## [0.1.15] — 2026-05-28
+
+### Fixed
+
+- antigravity agents now get the same `find-skills` + `5dive-cli` default
+  skill inheritance every other type gets. Previously preseed only ran for
+  `claude`, and the channel-installer seed steps (which cover codex/grok)
+  don't route antigravity at all, so antigravity agents booted with an
+  empty skills dir.
+- `SKILLS_INSTALL_DIR[antigravity]` corrected from `.gemini/antigravity-cli/skills`
+  (a guess based on agy's state dir layout) to `.agents/skills` (verified by
+  grepping the `agy` binary for `{workspace}/.agents/skills/{skill_name}/SKILL.md`).
+  The upstream `npx skills add --agent antigravity` fallback path already
+  matched this — header comment was the only thing out of sync.
+
+New `preseed_antigravity_agent` in `agent_setup.sh`, dispatched alongside
+`preseed_claude_agent` in `cmd_create`.
+
 ## [0.1.14] — 2026-05-28
 
 ### Fixed

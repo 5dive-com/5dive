@@ -26,7 +26,7 @@ esac
 
 # Bumped on every public release. `build.sh` checks this line exists; CI fails
 # the bundle-drift check if it's missing or empty.
-readonly FIVE_VERSION="0.1.14"
+readonly FIVE_VERSION="0.1.15"
 
 STATE_DIR="/var/lib/5dive"
 REGISTRY="${STATE_DIR}/agents.json"
@@ -213,9 +213,10 @@ declare -A SKILLS_AGENT_ID=(
   [hermes]=hermes-agent
   [openclaw]=openclaw
   [opencode]=opencode
-  # No published `npx skills --agent antigravity` registry entry; pass
-  # through so the skills CLI lands SKILL.md at the generic ./skills/<id>
-  # path (same fallback as openclaw).
+  # `npx skills add --agent antigravity` is NOT in the upstream registry, but
+  # the CLI silently falls back to a generic install path (.agents/skills/) —
+  # which is exactly where agy itself reads from (see SKILLS_INSTALL_DIR below).
+  # So passing it through works, even though it's an "unknown" agent id.
   [antigravity]=antigravity
   [grok]=grok
 )
@@ -230,7 +231,11 @@ declare -A SKILLS_INSTALL_DIR=(
   [hermes]=".hermes/skills"
   [openclaw]="skills"
   [opencode]=".agents/skills"
-  [antigravity]=".gemini/antigravity-cli/skills"
+  # agy reads skills from {workspace}/.agents/skills/{name}/SKILL.md — confirmed
+  # by grepping the antigravity binary for the path constant. Earlier map said
+  # .gemini/antigravity-cli/skills (matching its state dir), which was a guess
+  # — wrong. Upstream npx skills fallback already lands at .agents/skills.
+  [antigravity]=".agents/skills"
   [grok]=".grok/skills"
 )
 

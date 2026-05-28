@@ -498,6 +498,13 @@ cmd_create() {
   if [[ "$type" == "claude" ]]; then
     step "Preseeding claude config for agent-${name}"
     preseed_claude_agent "$name" "$channels"
+  elif [[ "$type" == "antigravity" ]]; then
+    # antigravity has no channel installer (install_channel_for_agent doesn't
+    # route it) and no claude-style ~/.claude preseed needed (agy reads its
+    # own ~/.gemini state). All that's missing is the default-skill seed
+    # step every other type gets one way or another — this runs it.
+    step "Preseeding antigravity default skills for agent-${name}"
+    preseed_antigravity_agent "$name"
   fi
 
   # Channel registration is type-aware (see install_channel_for_agent's

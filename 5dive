@@ -26,7 +26,7 @@ esac
 
 # Bumped on every public release. `build.sh` checks this line exists; CI fails
 # the bundle-drift check if it's missing or empty.
-readonly FIVE_VERSION="0.1.14"
+readonly FIVE_VERSION="0.1.15"
 
 STATE_DIR="/var/lib/5dive"
 REGISTRY="${STATE_DIR}/agents.json"
@@ -213,9 +213,10 @@ declare -A SKILLS_AGENT_ID=(
   [hermes]=hermes-agent
   [openclaw]=openclaw
   [opencode]=opencode
-  # No published `npx skills --agent antigravity` registry entry; pass
-  # through so the skills CLI lands SKILL.md at the generic ./skills/<id>
-  # path (same fallback as openclaw).
+  # `npx skills add --agent antigravity` is NOT in the upstream registry, but
+  # the CLI silently falls back to a generic install path (.agents/skills/) —
+  # which is exactly where agy itself reads from (see SKILLS_INSTALL_DIR below).
+  # So passing it through works, even though it's an "unknown" agent id.
   [antigravity]=antigravity
   [grok]=grok
 )
@@ -230,7 +231,11 @@ declare -A SKILLS_INSTALL_DIR=(
   [hermes]=".hermes/skills"
   [openclaw]="skills"
   [opencode]=".agents/skills"
-  [antigravity]=".gemini/antigravity-cli/skills"
+  # agy reads skills from {workspace}/.agents/skills/{name}/SKILL.md — confirmed
+  # by grepping the antigravity binary for the path constant. Earlier map said
+  # .gemini/antigravity-cli/skills (matching its state dir), which was a guess
+  # — wrong. Upstream npx skills fallback already lands at .agents/skills.
+  [antigravity]=".agents/skills"
   [grok]=".grok/skills"
 )
 
@@ -740,6 +745,21 @@ JSON
   #   5dive-cli   — spawn sub-agents on this VM via the local 5dive CLI
   install_default_skill_for_agent "$name" claude vercel-labs/skills find-skills || true
   install_default_skill_for_agent "$name" claude 5dive-com/skills 5dive-cli || true
+}
+
+# Preseed default skills for an antigravity agent. Unlike claude/codex/grok,
+# antigravity has no plugin marketplace and no telegram channel installer
+# (install_channel_for_agent doesn't route antigravity), so the seed step
+# that lives inside channel installers for codex/grok has nowhere to land.
+# This runs unconditionally from cmd_create so antigravity gets the same
+# find-skills + 5dive-cli inheritance every other type gets. Skills land at
+# $HOME/.agents/skills/ (per SKILLS_INSTALL_DIR + agy's own loader path).
+preseed_antigravity_agent() {
+  local name="$1"
+  local home="/home/agent-${name}"
+  [[ -d "$home" ]] || fail "$E_GENERIC" "agent home missing: $home"
+  install_default_skill_for_agent "$name" antigravity vercel-labs/skills find-skills || true
+  install_default_skill_for_agent "$name" antigravity 5dive-com/skills 5dive-cli || true
 }
 
 # Types that `npx skills add --agent <id>` doesn't recognize. The upstream
@@ -3969,6 +3989,13 @@ cmd_create() {
   if [[ "$type" == "claude" ]]; then
     step "Preseeding claude config for agent-${name}"
     preseed_claude_agent "$name" "$channels"
+  elif [[ "$type" == "antigravity" ]]; then
+    # antigravity has no channel installer (install_channel_for_agent doesn't
+    # route it) and no claude-style ~/.claude preseed needed (agy reads its
+    # own ~/.gemini state). All that's missing is the default-skill seed
+    # step every other type gets one way or another — this runs it.
+    step "Preseeding antigravity default skills for agent-${name}"
+    preseed_antigravity_agent "$name"
   fi
 
   # Channel registration is type-aware (see install_channel_for_agent's

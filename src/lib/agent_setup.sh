@@ -140,6 +140,21 @@ JSON
   install_default_skill_for_agent "$name" claude 5dive-com/skills 5dive-cli || true
 }
 
+# Preseed default skills for an antigravity agent. Unlike claude/codex/grok,
+# antigravity has no plugin marketplace and no telegram channel installer
+# (install_channel_for_agent doesn't route antigravity), so the seed step
+# that lives inside channel installers for codex/grok has nowhere to land.
+# This runs unconditionally from cmd_create so antigravity gets the same
+# find-skills + 5dive-cli inheritance every other type gets. Skills land at
+# $HOME/.agents/skills/ (per SKILLS_INSTALL_DIR + agy's own loader path).
+preseed_antigravity_agent() {
+  local name="$1"
+  local home="/home/agent-${name}"
+  [[ -d "$home" ]] || fail "$E_GENERIC" "agent home missing: $home"
+  install_default_skill_for_agent "$name" antigravity vercel-labs/skills find-skills || true
+  install_default_skill_for_agent "$name" antigravity 5dive-com/skills 5dive-cli || true
+}
+
 # Types that `npx skills add --agent <id>` doesn't recognize. The upstream
 # vercel-labs/skills CLI gates --agent against a hardcoded registry; passing
 # an unknown id fails with "Invalid agents: <id>" (verified for grok 0.x).
