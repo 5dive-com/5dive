@@ -9,6 +9,16 @@ release.
 
 ## [Unreleased]
 
+## [0.1.10] — 2026-05-28
+
+### Fixed
+
+- `5dive-agent-start` now launches `grok` with `--always-approve` so tool
+  executions (web fetch, shell, etc.) auto-approve instead of parking the
+  agent on an interactive permission dialog. Without it, a single
+  `reuters.com` fetch could stall a grok agent for 30+ minutes, blocking
+  all inter-agent traffic until a human toggled yolo mode in the TUI.
+
 ## [0.1.9] — 2026-05-27
 
 ### Added

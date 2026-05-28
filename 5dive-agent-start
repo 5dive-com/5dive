@@ -58,8 +58,10 @@ case "$TYPE" in
   # interactive TUI starts without args.
   antigravity) BIN="/home/claude/.local/bin/agy"; ARGS=() ;;
   # grok is xAI's CLI; the installer symlinks ~/.grok/bin/grok to
-  # ~/.local/bin/grok. Bare launch — interactive UI starts without args.
-  grok)     BIN="/home/claude/.local/bin/grok"; ARGS=() ;;
+  # ~/.local/bin/grok. --always-approve auto-accepts tool/web-fetch prompts —
+  # without it, inter-agent traffic stalls on the permission dialog (e.g. a
+  # reuters.com fetch parked an agent for 30+ min until yolo was toggled).
+  grok)     BIN="/home/claude/.local/bin/grok"; ARGS=(--always-approve) ;;
   *) echo "unknown AGENT_TYPE: $TYPE" >&2; exit 2 ;;
 esac
 
