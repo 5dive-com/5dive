@@ -9,6 +9,32 @@ release.
 
 ## [Unreleased]
 
+## [0.1.25] — 2026-05-30
+
+### Added
+- `5dive agent info <name> [--json]` — single-agent detail that resolves the
+  coding-CLI version and the selected model alongside the registry identity +
+  live systemd state. The version comes from the type's `TYPE_BIN` binary
+  (`--version`), the model from the per-type runtime config the CLI actually
+  loads (codex/grok `config.toml`, claude/antigravity `settings.json`). Both are
+  best-effort and surface as `null`/`—` when the runtime doesn't persist one
+  (e.g. grok/antigravity default to the CLI's built-in pick). JSON fields:
+  `cliName`, `cliVersion`, `model`. This lets each fork's `/status` read one
+  uniform source instead of shelling every runtime's config itself (the binaries
+  aren't on the agent user's PATH, and each type stores its model differently).
+
+## [0.1.24] — 2026-05-30
+
+### Added
+- First-class **antigravity** (agy, Google's Gemini CLI) Telegram support
+  (`TYPE_CHANNELS[antigravity]=1`). antigravity was already a first-class type
+  everywhere else; this flips on the Telegram channel path — provisioning,
+  cred-seed into `~/.gemini/channels/telegram/`, global `~/.gemini/config/`
+  mcp_config + hooks wiring at boot, connector token + inter-agent mirror, and
+  pairing / telegram-access — mirroring the grok path. All four agent types
+  (claude, codex, grok, antigravity) now reach Telegram with full MCP tools +
+  pairing.
+
 ## [0.1.23] — 2026-05-29
 
 ### Changed

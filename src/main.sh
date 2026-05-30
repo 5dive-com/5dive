@@ -30,6 +30,7 @@ Compose (declarative agents via 5dive.yaml):
 
 Agents:
   5dive agent list
+  5dive agent info <name>                            # type, CLI version, selected model, channel + state
   5dive agent types
   5dive agent create <name> --type=<type> [--channels=none|telegram|discord]
                             [--telegram-token=<bot-token>] [--discord-token=<token>]
@@ -208,6 +209,7 @@ main() {
       local sub="$1"; shift
       case "$sub" in
         list)    cmd_list "$@" ;;
+        info)    cmd_info "$@" ;;
         types)   cmd_types "$@" ;;
         logs)    cmd_logs "$@" ;;
         send)    cmd_send "$@" ;;

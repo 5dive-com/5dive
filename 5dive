@@ -26,7 +26,7 @@ esac
 
 # Bumped on every public release. `build.sh` checks this line exists; CI fails
 # the bundle-drift check if it's missing or empty.
-readonly FIVE_VERSION="0.1.24"
+readonly FIVE_VERSION="0.1.25"
 
 STATE_DIR="/var/lib/5dive"
 REGISTRY="${STATE_DIR}/agents.json"
@@ -3684,6 +3684,119 @@ cmd_list() {
         (["NAME","TYPE","CHANNELS","PROFILE","ACTIVE","ENABLED"] | @tsv),
         (.[] | [(.name + (if (.heartbeat.enabled // false) then " ∿" + ((.heartbeat.everyMin // 30)|tostring) + "m" else "" end)), .type, .channels, (.authProfile // "-"), .active, .enabled] | @tsv)
       end' | column -t -s $'\t'
+  fi
+}
+
+# Resolve the coding-CLI version string for an agent type from its TYPE_BIN
+# binary. Best-effort: returns "" if the binary is missing or doesn't answer
+# --version in time. Runs as `claude` (owns the binaries + their caches) through
+# a login shell so node/nvm-based CLIs (codex) inherit their PATH, capped at 5s
+# so a wedged CLI can't hang `info`.
+resolve_cli_version() {
+  local type="$1"
+  local bin="${TYPE_BIN[$type]:-}"
+  [[ -n "$bin" ]] || { printf ''; return; }
+  timeout 5 sudo -u claude bash -lc "$(printf '%q' "$bin") --version 2>/dev/null | head -1" 2>/dev/null || printf ''
+}
+
+# Resolve the model an agent is configured to use, read from the per-type
+# runtime config the CLI actually loads (codex/grok TOML, claude/antigravity
+# JSON). Best-effort: returns "" when the runtime doesn't persist a model
+# (grok/antigravity fall back to the CLI's built-in pick), so callers should
+# render "—"/null rather than treat empty as an error.
+resolve_agent_model() {
+  local type="$1" name="$2"
+  local home="/home/agent-${name}"
+  case "$type" in
+    claude)
+      sudo jq -r '.model // empty' "$home/.claude/settings.json" 2>/dev/null ;;
+    codex)
+      sudo sed -nE 's/^[[:space:]]*model[[:space:]]*=[[:space:]]*"?([^"#]*[^"# ])"?.*/\1/p' \
+        "$home/.codex/config.toml" 2>/dev/null | head -1 ;;
+    grok)
+      sudo sed -nE 's/^[[:space:]]*model[[:space:]]*=[[:space:]]*"?([^"#]*[^"# ])"?.*/\1/p' \
+        "$home/.grok/config.toml" 2>/dev/null | head -1 ;;
+    antigravity)
+      sudo jq -r '.model // .selectedModel // empty' \
+        "$home/.gemini/antigravity-cli/settings.json" 2>/dev/null ;;
+    *) printf '' ;;
+  esac
+}
+
+# Single-agent detail: registry identity/config + live systemd state, plus the
+# resolved coding-CLI version and selected model. Added so each fork's /status
+# reads one uniform source (cliName/cliVersion/model) instead of shelling each
+# runtime's config itself — the version/model live in different files per type
+# and the binaries aren't on the agent user's PATH.
+cmd_info() {
+  ensure_state
+  local name=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -*) fail "$E_USAGE" "unknown flag: $1" ;;
+      *)  [[ -z "$name" ]] && name="$1" || fail "$E_USAGE" "extra arg: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$name" ]] || fail "$E_USAGE" "usage: 5dive agent info <name> [--json]"
+  require_agent "$name"
+
+  local reg
+  reg=$(registry_read)
+
+  local svc="5dive-agent@${name}"
+  local active enabled
+  active=$(systemctl is-active "$svc" 2>/dev/null || true)
+  enabled=$(systemctl is-enabled "$svc" 2>/dev/null || true)
+
+  local type
+  type=$(jq -r --arg n "$name" '.agents[$n].type' <<<"$reg")
+
+  local cli_version model
+  cli_version=$(resolve_cli_version "$type")
+  model=$(resolve_agent_model "$type" "$name")
+
+  local obj
+  obj=$(jq -c \
+    --arg n "$name" \
+    --arg default_wd "$DEFAULT_WORKDIR" \
+    --arg active "${active:-unknown}" \
+    --arg enabled "${enabled:-unknown}" \
+    --arg cliName "$type" \
+    --arg cliVersion "$cli_version" \
+    --arg model "$model" \
+    '.agents[$n] as $a | {
+      name: $n,
+      type: $a.type,
+      channels: ($a.channels // "none"),
+      workdir: ($a.workdir // $default_wd),
+      authProfile: ($a.authProfile // null),
+      botUsername: ($a.botUsername // null),
+      isolation: ($a.isolation // "admin"),
+      heartbeat: ($a.heartbeat // null),
+      createdAt: $a.createdAt,
+      active: $active,
+      enabled: $enabled,
+      cliName: $cliName,
+      cliVersion: (if $cliVersion == "" then null else $cliVersion end),
+      model: (if $model == "" then null else $model end)
+    }' <<<"$reg")
+
+  if (( JSON_MODE )); then
+    jq -cn --argjson d "$obj" '{ok:true, data:$d}'
+  else
+    jq -r '
+      "name:        \(.name)",
+      "type:        \(.type)",
+      "cli:         \(.cliName) \(.cliVersion // "unknown")",
+      "model:       \(.model // "—")",
+      "channels:    \(.channels)\(if .botUsername then " (@\(.botUsername))" else "" end)",
+      "profile:     \(.authProfile // "-")",
+      "workdir:     \(.workdir)",
+      "isolation:   \(.isolation)",
+      "state:       \(.active) / \(.enabled)",
+      "created:     \(.createdAt // "unknown")"
+    ' <<<"$obj"
   fi
 }
 
@@ -8433,6 +8546,7 @@ Compose (declarative agents via 5dive.yaml):
 
 Agents:
   5dive agent list
+  5dive agent info <name>                            # type, CLI version, selected model, channel + state
   5dive agent types
   5dive agent create <name> --type=<type> [--channels=none|telegram|discord]
                             [--telegram-token=<bot-token>] [--discord-token=<token>]
@@ -8611,6 +8725,7 @@ main() {
       local sub="$1"; shift
       case "$sub" in
         list)    cmd_list "$@" ;;
+        info)    cmd_info "$@" ;;
         types)   cmd_types "$@" ;;
         logs)    cmd_logs "$@" ;;
         send)    cmd_send "$@" ;;
