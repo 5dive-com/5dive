@@ -54,9 +54,11 @@ case "$TYPE" in
   opencode) BIN="/home/claude/.local/bin/opencode"; ARGS=() ;;
   # antigravity ships as `agy` (Google's native-Go gemini-cli successor). The
   # type id stays "antigravity" everywhere (agents.d/<name>.env, TYPE_BIN,
-  # auth dispatch); only the on-disk binary is named agy. Bare launch — the
-  # interactive TUI starts without args.
-  antigravity) BIN="/home/claude/.local/bin/agy"; ARGS=() ;;
+  # auth dispatch); only the on-disk binary is named agy.
+  # --dangerously-skip-permissions auto-accepts tool/shell prompts so the
+  # headless wait_for_message loop never stalls on a permission dialog (agy's
+  # equivalent of grok's --always-approve / claude's bypass).
+  antigravity) BIN="/home/claude/.local/bin/agy"; ARGS=(--dangerously-skip-permissions) ;;
   # grok is xAI's CLI; the installer symlinks ~/.grok/bin/grok to
   # ~/.local/bin/grok. --always-approve auto-accepts tool/web-fetch prompts —
   # without it, inter-agent traffic stalls on the permission dialog (e.g. a
@@ -592,6 +594,96 @@ if [[ "$TYPE" == "antigravity" ]]; then
     jq -n --arg ws "$WORKDIR" '{enableTelemetry:false, trustedWorkspaces:[$ws]}' > "$AGY_SETTINGS" 2>/dev/null \
       || printf '{"enableTelemetry":false,"trustedWorkspaces":["%s"]}\n' "$WORKDIR" > "$AGY_SETTINGS"
     chmod 600 "$AGY_SETTINGS"
+  fi
+fi
+
+# Wire the telegram-agy MCP server + lifecycle hooks for this antigravity agent
+# (telegram channel only). Like grok, a single shared plugin checkout serves
+# every agy agent (server.ts + hooks resolve state from $HOME via homedir() →
+# ~/.gemini/channels/telegram). Unlike claude, agy's runtime plugin discovery
+# only auto-wires skills + agents — NOT mcp servers or hooks (verified agy 1.0.3,
+# per telegram-agy/TODO.md). So both surfaces go into agy's GLOBAL flat config:
+#   1. ~/.gemini/config/mcp_config.json → {"mcpServers":{"telegram":{...}}}.
+#      Ships empty (0 bytes) → agy logs "unexpected end of JSON input" and MCP
+#      discovery breaks until written. We point command=bun with an absolute
+#      --cwd at the installed plugin (${AGY_PLUGIN_DIR}); ${CLAUDE_PLUGIN_ROOT}
+#      in the plugin's own mcp_config.json isn't expanded for a globally-wired
+#      server, so we write the absolute path here.
+#   2. ~/.gemini/config/hooks.json → PreToolUse/Stop/Notification hooks with
+#      absolute `bun <plugin>/hooks/*.ts` commands (same absolute-path lesson as
+#      grok). silence-watchdog stays opt-in via AGY_SILENCE_WATCHDOG_ENABLED=1.
+# Both files are create-only (idempotent): we don't clobber a config the user
+# may have edited — skipped when the telegram MCP server is already present.
+if [[ "$TYPE" == "antigravity" ]] && [[ "$CHANNELS" == "telegram" ]]; then
+  AGY_CONFIG_DIR="$HOME/.gemini/config"
+  install -d -m 700 "$HOME/.gemini" "$AGY_CONFIG_DIR"
+  AGY_PLUGIN_DIR=""
+  for _c in "${TELEGRAM_AGY_PLUGIN_DIR:-}" \
+            /usr/local/lib/5dive/telegram-agy \
+            /home/claude/projects/5dive/5dive-plugins/plugins/telegram-agy; do
+    [[ -n "$_c" && -f "$_c/server.ts" ]] && { AGY_PLUGIN_DIR="$_c"; break; }
+  done
+  if [[ -n "$AGY_PLUGIN_DIR" ]]; then
+    AGY_MCP="$AGY_CONFIG_DIR/mcp_config.json"
+    # (Re)write when the file is missing, empty (ships 0 bytes), or doesn't yet
+    # hold our telegram server. jq merges into any existing mcpServers map so a
+    # user's other servers survive; falls back to a plain overwrite if jq fails.
+    if [[ ! -s "$AGY_MCP" ]] || ! grep -q '"telegram"' "$AGY_MCP" 2>/dev/null; then
+      MCP_TMP=$(mktemp -p "$AGY_CONFIG_DIR" .mcp_config.json.XXXXXX)
+      if jq -n --arg cwd "$AGY_PLUGIN_DIR" \
+        '{mcpServers:{telegram:{command:"bun",args:["run","--cwd",$cwd,"--shell=bun","--silent","start"]}}}' \
+        > "$MCP_TMP" 2>/dev/null; then
+        chmod 600 "$MCP_TMP"; mv "$MCP_TMP" "$AGY_MCP"
+      else
+        rm -f "$MCP_TMP"
+        cat > "$AGY_MCP" <<MCPJSON
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "bun",
+      "args": ["run", "--cwd", "${AGY_PLUGIN_DIR}", "--shell=bun", "--silent", "start"]
+    }
+  }
+}
+MCPJSON
+        chmod 600 "$AGY_MCP"
+      fi
+    fi
+
+    AGY_HOOKS="$AGY_CONFIG_DIR/hooks.json"
+    if [[ ! -s "$AGY_HOOKS" ]] || ! grep -q 'notify-stop.ts' "$AGY_HOOKS" 2>/dev/null; then
+      HOOKS_TMP=$(mktemp -p "$AGY_CONFIG_DIR" .hooks.json.XXXXXX)
+      cat > "$HOOKS_TMP" <<HOOKSJSON
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bun ${AGY_PLUGIN_DIR}/hooks/silence-watchdog.ts", "timeout": 5 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bun ${AGY_PLUGIN_DIR}/hooks/notify-stop.ts", "timeout": 10 }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bun ${AGY_PLUGIN_DIR}/hooks/notification-relay.ts", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}
+HOOKSJSON
+      chmod 600 "$HOOKS_TMP"; mv "$HOOKS_TMP" "$AGY_HOOKS"
+    fi
+  else
+    echo "warn: telegram channel set for antigravity agent '$NAME' but telegram-agy plugin not found (TELEGRAM_AGY_PLUGIN_DIR / /usr/local/lib/5dive/telegram-agy / 5dive-plugins checkout) — MCP + hooks not wired" >&2
   fi
 fi
 

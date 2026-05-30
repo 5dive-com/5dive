@@ -169,6 +169,35 @@ refresh_managed_files() {
   else
     echo "warn: failed to stage telegram-grok from $GROK_PLUGIN_TARBALL — grok+telegram won't be available until the next successful refresh" >&2
   fi
+
+  # Stage the telegram-agy plugin — same shape as telegram-grok above.
+  # antigravity (agy) has no plugin marketplace, so every agy+telegram agent
+  # shares this one checkout via absolute paths written into the GLOBAL
+  # ~/.gemini/config/{mcp_config.json,hooks.json} by 5dive-agent-start (agy
+  # doesn't auto-load a plugin's mcp_config/hooks — only skills/agents).
+  # Override the tarball with AGY_PLUGIN_TARBALL for offline / pinned installs.
+  AGY_PLUGIN_TARBALL="${AGY_PLUGIN_TARBALL:-https://github.com/5dive-com/5dive-plugins/archive/refs/heads/main.tar.gz}"
+  _agy_tmp="$(mktemp -d)"
+  if curl -fsSL "$AGY_PLUGIN_TARBALL" \
+      | tar -xz -C "$_agy_tmp" --strip-components=1 '5dive-plugins-main/plugins/telegram-agy' 2>/dev/null \
+      && [ -f "$_agy_tmp/plugins/telegram-agy/server.ts" ]; then
+    install -d -m 755 "$LIB_DIR/telegram-agy"
+    cp -a "$_agy_tmp/plugins/telegram-agy/." "$LIB_DIR/telegram-agy/"
+    if id -u claude >/dev/null 2>&1; then
+      chown -R claude:claude "$LIB_DIR/telegram-agy"
+      if sudo -u claude -H bash -lc "cd $(printf %q "$LIB_DIR/telegram-agy") && bun install --production --ignore-scripts --no-progress --no-summary" >/dev/null 2>&1; then
+        chmod -R a+rX "$LIB_DIR/telegram-agy"
+        ok "telegram-agy plugin"
+      else
+        echo "warn: bun install for telegram-agy failed — antigravity+telegram agents won't have the bridge until the next successful refresh" >&2
+      fi
+    else
+      echo "warn: no claude user — skipping telegram-agy bun install" >&2
+    fi
+  else
+    echo "warn: failed to stage telegram-agy from $AGY_PLUGIN_TARBALL — antigravity+telegram won't be available until the next successful refresh" >&2
+  fi
+  rm -rf "$_agy_tmp"
   rm -rf "$_grk_tmp"
 
   # CLAUDE.md fragment that preseed_claude_agent drops into a telegram-paired

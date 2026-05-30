@@ -862,6 +862,128 @@ PY
   fi
 }
 
+# Resolve the telegram-agy plugin checkout. Same shape as grok_plugin_dir
+# above — control-plane host uses the 5dive-plugins repo checkout, customer
+# VMs use /usr/local/lib/5dive once install.sh deploys it. Override with
+# TELEGRAM_AGY_PLUGIN_DIR for offline / test installs. The matching resolver
+# in 5dive-agent-start is intentionally duplicated (the boot script is
+# standalone).
+antigravity_plugin_dir() {
+  local c
+  for c in "${TELEGRAM_AGY_PLUGIN_DIR:-}" \
+           /usr/local/lib/5dive/telegram-agy \
+           /home/claude/projects/5dive/5dive-plugins/plugins/telegram-agy; do
+    [[ -n "$c" && -f "$c/server.ts" ]] && { printf '%s\n' "$c"; return 0; }
+  done
+  return 1
+}
+
+# Configure the telegram channel for an antigravity (agy) agent. Structurally
+# identical to install_channel_for_grok_agent — agy has no plugin marketplace,
+# so a single shared plugin checkout serves every agy agent (server.ts resolves
+# its state dir from the agent's own $HOME via homedir() → ~/.gemini/channels/
+# telegram). We (1) write the bot token into ~/.gemini/channels/telegram/.env
+# and (2) seed access.json. The MCP server + lifecycle hooks are wired into the
+# GLOBAL ~/.gemini/config/{mcp_config.json,hooks.json} at boot by
+# 5dive-agent-start (agy doesn't auto-load a plugin's mcp_config/hooks — only
+# skills/agents). agy runs with --dangerously-skip-permissions (set in
+# 5dive-agent-start), so there are no tool prompts to bridge.
+install_channel_for_antigravity_agent() {
+  local plugin="$1" name="$2" token="$3" allowed_users="${4:-}"
+  local user="agent-${name}"
+  id -u "$user" &>/dev/null || fail "$E_GENERIC" "agent user missing: $user"
+  [[ "$plugin" == "telegram" ]] \
+    || fail "$E_VALIDATION" "antigravity channel plugin unsupported: $plugin (telegram only)"
+  [[ -n "$token" ]] || fail "$E_VALIDATION" "antigravity telegram channel requires a bot token"
+  if [[ -n "$allowed_users" ]]; then
+    valid_telegram_chat_id_list "$allowed_users" \
+      || fail "$E_VALIDATION" "invalid allowed_users (comma-separated numeric ids)"
+  fi
+
+  antigravity_plugin_dir >/dev/null \
+    || fail "$E_NOT_INSTALLED" \
+       "telegram-agy plugin not found (looked in /usr/local/lib/5dive/telegram-agy and the 5dive-plugins checkout). Set TELEGRAM_AGY_PLUGIN_DIR or deploy the plugin."
+
+  if ! sudo -u "$user" -i bash -lc 'command -v bun' >/dev/null 2>&1; then
+    fail "$E_NOT_INSTALLED" \
+      "bun not on PATH for $user (required by telegram-agy). Run: sudo 5dive doctor --repair"
+  fi
+
+  step "Writing telegram token into ~/.gemini/channels/telegram/.env for $user"
+  if ! sudo -u "$user" -H env TOKEN="$token" bash -s >&2 <<'AGY_ENV'
+set -euo pipefail
+mkdir -p "$HOME/.gemini/channels/telegram"
+chmod 700 "$HOME/.gemini" "$HOME/.gemini/channels" "$HOME/.gemini/channels/telegram" 2>/dev/null || true
+ENV_FILE="$HOME/.gemini/channels/telegram/.env"
+touch "$ENV_FILE"; chmod 600 "$ENV_FILE"
+TMP=$(mktemp --tmpdir="$HOME/.gemini/channels/telegram" .env.XXXXXX); chmod 600 "$TMP"
+grep -v '^TELEGRAM_BOT_TOKEN=' "$ENV_FILE" > "$TMP" || true
+printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TOKEN" >> "$TMP"
+mv "$TMP" "$ENV_FILE"
+AGY_ENV
+  then
+    fail "$E_GENERIC" "antigravity telegram .env write failed for agent '$name'"
+  fi
+
+  if [[ -n "$allowed_users" ]]; then
+    seed_antigravity_telegram_access "$name" "$allowed_users"
+  fi
+
+  # Seed the notify-user skill into agy's skills dir so the agent self-starts
+  # its comms loop on first DM. Mirrors the grok path; agy reads skills from
+  # $HOME/.agents/skills/<name>/SKILL.md (per SKILLS_INSTALL_DIR[antigravity]).
+  if [[ -f "$AGENT_SKILLS_DIR/notify-user/SKILL.md" ]]; then
+    sudo -u "$user" mkdir -p "/home/${user}/.agents/skills/notify-user"
+    sudo -u "$user" cp "$AGENT_SKILLS_DIR/notify-user/SKILL.md" \
+      "/home/${user}/.agents/skills/notify-user/SKILL.md"
+  fi
+
+  # Default skills, best-effort: match the grok-side install so agy agents get
+  # find-skills + 5dive-cli too. (preseed_antigravity_agent already runs these
+  # from cmd_create; repeating here keeps channel-attach self-contained and the
+  # installs are idempotent.)
+  install_default_skill_for_agent "$name" antigravity vercel-labs/skills find-skills || true
+  install_default_skill_for_agent "$name" antigravity 5dive-com/skills 5dive-cli || true
+}
+
+# Write ~/.gemini/channels/telegram/access.json for agent-<name> with allowFrom
+# seeded from a CSV of user ids. Idempotent — mirrors seed_grok_telegram_access.
+seed_antigravity_telegram_access() {
+  local name="$1" allowed_users="$2"
+  local user="agent-${name}"
+  step "Pre-seeding antigravity telegram allowlist for $user (${allowed_users})"
+  if ! sudo -u "$user" env CSV="$allowed_users" python3 - <<'PY' >&2; then
+import json, os, tempfile
+
+state = os.path.join(os.path.expanduser('~'), '.gemini', 'channels', 'telegram')
+os.makedirs(state, mode=0o700, exist_ok=True)
+access_path = os.path.join(state, 'access.json')
+ids = [s.strip() for s in os.environ['CSV'].split(',') if s.strip()]
+
+try:
+    with open(access_path) as f:
+        data = json.load(f)
+except FileNotFoundError:
+    data = {"allowFrom": [], "groups": {}}
+
+allow = list(data.get('allowFrom') or [])
+for s in ids:
+    if s not in allow:
+        allow.append(s)
+data['allowFrom'] = allow
+data.setdefault('groups', {})
+
+fd, tmp = tempfile.mkstemp(dir=state, prefix='.access.', suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
+    json.dump(data, f, indent=2)
+os.chmod(tmp, 0o600)
+os.replace(tmp, access_path)
+print(f"Seeded allowFrom={allow} into {access_path}")
+PY
+    fail "$E_GENERIC" "antigravity telegram access.json pre-seed failed for agent '$name'"
+  fi
+}
+
 # Single dispatch point used by cmd_create. Routes a (type, plugin) pair to
 # the right install helper above, so the create flow stays type-agnostic.
 # home_channel/allowed_users are hermes-telegram extras (ignored by other
@@ -869,11 +991,12 @@ PY
 install_channel_for_agent() {
   local type="$1" plugin="$2" name="$3" token="$4" home_channel="${5:-}" allowed_users="${6:-}"
   case "$type" in
-    claude)   install_channel_plugin_for_agent "$plugin" "$name" "$allowed_users" ;;
-    codex)    install_channel_for_codex_agent "$plugin" "$name" "$token" "$allowed_users" ;;
-    grok)     install_channel_for_grok_agent "$plugin" "$name" "$token" "$allowed_users" ;;
-    openclaw) install_channel_for_openclaw_agent "$plugin" "$name" "$token" "$home_channel" "$allowed_users" ;;
-    hermes)   install_channel_for_hermes_agent "$plugin" "$name" "$token" "$home_channel" "$allowed_users" ;;
+    claude)      install_channel_plugin_for_agent "$plugin" "$name" "$allowed_users" ;;
+    codex)       install_channel_for_codex_agent "$plugin" "$name" "$token" "$allowed_users" ;;
+    grok)        install_channel_for_grok_agent "$plugin" "$name" "$token" "$allowed_users" ;;
+    antigravity) install_channel_for_antigravity_agent "$plugin" "$name" "$token" "$allowed_users" ;;
+    openclaw)    install_channel_for_openclaw_agent "$plugin" "$name" "$token" "$home_channel" "$allowed_users" ;;
+    hermes)      install_channel_for_hermes_agent "$plugin" "$name" "$token" "$home_channel" "$allowed_users" ;;
     *) fail "$E_VALIDATION" "type '$type' does not support channels" ;;
   esac
 }

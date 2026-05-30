@@ -26,7 +26,7 @@ esac
 
 # Bumped on every public release. `build.sh` checks this line exists; CI fails
 # the bundle-drift check if it's missing or empty.
-readonly FIVE_VERSION="0.1.23"
+readonly FIVE_VERSION="0.1.24"
 
 STATE_DIR="/var/lib/5dive"
 REGISTRY="${STATE_DIR}/agents.json"
@@ -124,7 +124,12 @@ declare -A TYPE_CHANNELS=(
   [codex]=1
   [grok]=1
   [opencode]=0
-  [antigravity]=0
+  # antigravity (agy) ships the same telegram MCP bridge as grok/codex —
+  # ~/.gemini/channels/telegram/{.env,access.json} + a shared plugin checkout
+  # whose MCP server + lifecycle hooks 5dive-agent-start writes into the
+  # GLOBAL ~/.gemini/config/{mcp_config.json,hooks.json} at boot (agy doesn't
+  # auto-load a plugin's mcp_config/hooks — only skills/agents). telegram only.
+  [antigravity]=1
 )
 # Auth sentinel per type. Agent users run as agent-<name> (in group `claude`)
 # and cannot read /home/claude/.claude/settings.json (mode 0600), so for

@@ -327,10 +327,10 @@ cmd_create() {
   fi
 
   if [[ "$channels" != "none" ]] && [[ "${TYPE_CHANNELS[$type]}" != "1" ]]; then
-    fail "$E_VALIDATION" "type '$type' does not support channels (only: claude, codex, grok, openclaw, hermes)"
+    fail "$E_VALIDATION" "type '$type' does not support channels (only: claude, codex, grok, antigravity, openclaw, hermes)"
   fi
-  # codex + grok ship a telegram MCP bridge only — no discord build yet.
-  if [[ ( "$type" == "codex" || "$type" == "grok" ) && "$channels" == "discord" ]]; then
+  # codex + grok + antigravity ship a telegram MCP bridge only — no discord build yet.
+  if [[ ( "$type" == "codex" || "$type" == "grok" || "$type" == "antigravity" ) && "$channels" == "discord" ]]; then
     fail "$E_VALIDATION" "type '$type' supports --channels=telegram only (no discord build)"
   fi
 
@@ -500,10 +500,13 @@ cmd_create() {
     step "Preseeding claude config for agent-${name}"
     preseed_claude_agent "$name" "$channels"
   elif [[ "$type" == "antigravity" ]]; then
-    # antigravity has no channel installer (install_channel_for_agent doesn't
-    # route it) and no claude-style ~/.claude preseed needed (agy reads its
-    # own ~/.gemini state). All that's missing is the default-skill seed
-    # step every other type gets one way or another — this runs it.
+    # antigravity needs no claude-style ~/.claude preseed (agy reads its own
+    # ~/.gemini state). The default-skill seed every other type gets isn't
+    # folded into a channel installer for the no-channel case, so run it
+    # here unconditionally. When channels=telegram, install_channel_for_agent
+    # (routed below) wires the bot token + access.json + notify-user skill on
+    # top — the find-skills/5dive-cli seed below is idempotent so the overlap
+    # is harmless.
     step "Preseeding antigravity default skills for agent-${name}"
     preseed_antigravity_agent "$name"
   fi
@@ -1203,14 +1206,17 @@ _persist_bot_username() {
 # plugin would write on first run.
 # Resolve the telegram-plugin state dir (where access.json lives) for an agent
 # by type. claude, codex and grok each store it under ~/.<type>/channels/telegram/
-# — the home subdir name matches the agent type, and all three use the same
+# — the home subdir name matches the agent type, and all use the same
 # access.json schema {dmPolicy, allowFrom, groups}. Echoes the dir on success;
 # returns nonzero for types that have no telegram access.json (openclaw/hermes
-# manage approvals through their own tooling, not this file).
+# manage approvals through their own tooling, not this file). antigravity is the
+# odd one out: its home subdir is ~/.gemini (not ~/.antigravity) because agy
+# reuses Google's ~/.gemini parent, so it gets an explicit branch.
 _tg_access_state_dir() {
   local user="$1" type="$2"
   case "$type" in
     claude|codex|grok) printf '/home/%s/.%s/channels/telegram' "$user" "$type" ;;
+    antigravity)       printf '/home/%s/.gemini/channels/telegram' "$user" ;;
     *) return 1 ;;
   esac
 }
@@ -1238,7 +1244,7 @@ cmd_telegram_access_get() {
   local user="agent-${name}"
   local state_dir
   state_dir=$(_tg_access_state_dir "$user" "$type") \
-    || fail "$E_VALIDATION" "telegram-access supports claude, codex and grok agents (got type=$type)"
+    || fail "$E_VALIDATION" "telegram-access supports claude, codex, grok and antigravity agents (got type=$type)"
   local access="${state_dir}/access.json"
   local raw
   raw=$(sudo -u "$user" cat "$access" 2>/dev/null || true)
@@ -1284,7 +1290,7 @@ cmd_telegram_access_set() {
   local user="agent-${name}"
   local state_dir
   state_dir=$(_tg_access_state_dir "$user" "$type") \
-    || fail "$E_VALIDATION" "telegram-access supports claude, codex and grok agents (got type=$type)"
+    || fail "$E_VALIDATION" "telegram-access supports claude, codex, grok and antigravity agents (got type=$type)"
 
   local body
   body=$(cat)
@@ -1397,7 +1403,7 @@ cmd_telegram_pending_ignore() {
   local user="agent-${name}"
   local state_dir
   state_dir=$(_tg_access_state_dir "$user" "$type") \
-    || fail "$E_VALIDATION" "telegram-pending-ignore supports claude, codex and grok agents (got type=$type)"
+    || fail "$E_VALIDATION" "telegram-pending-ignore supports claude, codex, grok and antigravity agents (got type=$type)"
   local access="${state_dir}/access.json"
   local err
   err=$(sudo -u "$user" env ACCESS="$access" CODE="$code" python3 - <<'PY' 2>&1 >/dev/null
@@ -1479,8 +1485,8 @@ cmd_telegram_resolve_handle() {
   type=$(jq -r --arg n "$name" '.agents[$n].type' <<<"$reg")
   channels=$(jq -r --arg n "$name" '.agents[$n].channels' <<<"$reg")
   case "$type" in
-    claude|codex|grok) ;;
-    *) fail "$E_VALIDATION" "telegram-resolve-handle supports claude, codex and grok agents (got type=$type)" ;;
+    claude|codex|grok|antigravity) ;;
+    *) fail "$E_VALIDATION" "telegram-resolve-handle supports claude, codex, grok and antigravity agents (got type=$type)" ;;
   esac
   [[ "$channels" == "telegram" ]] \
     || fail "$E_VALIDATION" "agent '$name' has channels=$channels — telegram-resolve-handle only applies to telegram"
@@ -1614,19 +1620,19 @@ cmd_pair() {
     telegram|discord) ;;
     *) fail "$E_VALIDATION" "agent '$name' has channels=$channels — pairing only applies to telegram or discord" ;;
   esac
-  # cmd_pair applies to claude, codex and grok — their telegram/discord
-  # plugins use a code-roundtrip (user DMs bot, bot replies with a code,
+  # cmd_pair applies to claude, codex, grok and antigravity — their
+  # telegram/discord plugins use a code-roundtrip (user DMs bot, bot replies with a code,
   # dashboard pastes the code back to seed access.json) and share the same
   # access.json schema + path layout (~/.<type>/channels/<channel>/). openclaw
   # and hermes are token-only: the bot token alone is enough to authorise the
   # agent, and inbound user approvals flow through openclaw's own `pairing`
   # subcommand rather than this code path.
   case "$type" in
-    claude|codex|grok) ;;
+    claude|codex|grok|antigravity) ;;
     openclaw|hermes)
       fail "$E_VALIDATION" "type=$type doesn't use pair codes — the bot token configured at create time is sufficient. To approve specific Telegram/Discord users for an openclaw agent, run: sudo -u agent-${name} openclaw pairing list" ;;
     *)
-      fail "$E_VALIDATION" "pairing only applies to claude, codex and grok agents (got type=$type)" ;;
+      fail "$E_VALIDATION" "pairing only applies to claude, codex, grok and antigravity agents (got type=$type)" ;;
   esac
 
   local user="agent-${name}"
@@ -1848,9 +1854,10 @@ send_welcome_message() {
   [[ -n "$agent_name" ]] && name_q="'${agent_name}', "
 
   case "$agent_type" in
-    codex|grok)
+    codex|grok|antigravity)
       local kind
       if [[ "$agent_type" == "codex" ]]; then kind="Codex agent (OpenAI Codex)"
+      elif [[ "$agent_type" == "antigravity" ]]; then kind="Antigravity agent (Google Gemini)"
       else kind="Grok agent (xAI Grok)"; fi
       text=$(cat <<EOF
 👋 We're connected! I'm ${name_q}your ${kind}.
