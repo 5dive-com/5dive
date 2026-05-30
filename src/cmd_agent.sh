@@ -78,6 +78,70 @@ resolve_agent_model() {
   esac
 }
 
+# Write the selected model into the per-type runtime config the CLI loads, so
+# `config set model=` is the single uniform path the forks' /model shells out to
+# (replacing each plugin's own per-runtime config write). TOML (codex/grok) and
+# JSON (claude/antigravity) are handled distinctly:
+#   - TOML: split at the first table header; replace an existing top-level
+#     `model = ...` in the preamble, else prepend one above the first [table] —
+#     so the key stays document-root-level, never binds to a [section] and never
+#     duplicates (matches telegram-{codex,grok} writeConfigModel()).
+#   - JSON: merge-write the top-level `.model` key, preserving every other key.
+# The runtime config must already exist (every provisioned+started agent has
+# one) — we refuse to create it, both because a bare new file would drop the
+# other required settings and because pre-seeding codex's config.toml would make
+# 5dive-agent-start skip its approval_policy/sandbox baseline. Atomic (tmp +
+# rename) with the existing owner:group + 600 mode preserved.
+write_runtime_model() {
+  local type="$1" name="$2" model="$3"
+  local home="/home/agent-${name}" file fmt
+  case "$type" in
+    claude)      file="$home/.claude/settings.json"; fmt=json ;;
+    codex)       file="$home/.codex/config.toml";     fmt=toml ;;
+    grok)        file="$home/.grok/config.toml";       fmt=toml ;;
+    antigravity) file="$home/.gemini/antigravity-cli/settings.json"; fmt=json ;;
+    *) fail "$E_VALIDATION" "type '$type' has no model config (can't set model=)" ;;
+  esac
+  [[ -f "$file" ]] \
+    || fail "$E_NOT_FOUND" "no $type runtime config at $file yet — start agent '$name' once before setting model"
+  local dir own
+  dir=$(dirname "$file")
+  own=$(stat -c '%U:%G' "$file")
+  local tmp
+  tmp=$(mktemp -p "$dir" .model.XXXXXX) || fail "$E_GENERIC" "mktemp failed in $dir"
+  if ! MODEL_FMT="$fmt" MODEL_VAL="$model" MODEL_SRC="$file" python3 - "$tmp" <<'PY'
+import os, sys, json, re
+fmt, val, src, tmp = os.environ["MODEL_FMT"], os.environ["MODEL_VAL"], os.environ["MODEL_SRC"], sys.argv[1]
+with open(src) as f: orig = f.read()
+if fmt == "json":
+    try:
+        data = json.loads(orig) if orig.strip() else {}
+    except ValueError:
+        sys.stderr.write("existing %s is not valid JSON\n" % src); sys.exit(3)
+    if not isinstance(data, dict):
+        sys.stderr.write("existing %s is not a JSON object\n" % src); sys.exit(3)
+    data["model"] = val
+    out = json.dumps(data, indent=2) + "\n"
+else:  # toml — only ever touch the preamble before the first [table] header
+    m = re.search(r'^\s*\[', orig, re.M)
+    head = orig if m is None else orig[:m.start()]
+    tail = "" if m is None else orig[m.start():]
+    line = 'model = "%s"' % val
+    if re.search(r'^[ \t]*model[ \t]*=.*$', head, re.M):
+        head = re.sub(r'^[ \t]*model[ \t]*=.*$', line, head, count=1, flags=re.M)
+    else:
+        head = line + "\n" + head
+    out = head + tail
+with open(tmp, "w") as f: f.write(out)
+PY
+  then
+    rm -f "$tmp"; fail "$E_GENERIC" "failed to write model into $file"
+  fi
+  chown "$own" "$tmp" 2>/dev/null || true
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$file"
+}
+
 # Single-agent detail: registry identity/config + live systemd state, plus the
 # resolved coding-CLI version and selected model. Added so each fork's /status
 # reads one uniform source (cliName/cliVersion/model) instead of shelling each
@@ -833,6 +897,9 @@ cmd_config() {
   # Usage: 5dive agent config <name> set <key>=<value> [<key>=<value>...]
   #   keys:
   #     channels                  (none|telegram|discord)
+  #     model                     (model id for the agent's CLI — claude/codex/
+  #                                grok/antigravity; written into the type's
+  #                                runtime config, applied on the deferred restart)
   #     workdir                   (absolute path; tmux cwd on next launch;
   #                                value "default" or "" clears the override)
   #     telegram.token            (bot token for this agent's telegram plugin)
@@ -873,6 +940,7 @@ cmd_config() {
   local new_discord_token=""
   local new_home_channel=""
   local new_allowed_users=""
+  local new_model=""
   # applied_keys: names of keys that were actually changed, for the JSON payload.
   local -a applied_keys=()
   for kv in "$@"; do
@@ -929,6 +997,22 @@ cmd_config() {
           || fail "$E_VALIDATION" "telegram.allowed-users must be a comma-separated list of numeric ids"
         new_allowed_users="$v"
         applied_keys+=("telegram.allowed-users")
+        ;;
+      model)
+        # Uniform model switch — writes the selected model into the type's
+        # runtime config (see write_runtime_model). Applied below, picked up by
+        # the deferred restart at the end of this function. Not stored in the
+        # registry: `agent info` reads the live file so a model changed via the
+        # native CLI directly stays the source of truth.
+        [[ -n "$v" ]] || fail "$E_VALIDATION" "model cannot be empty"
+        valid_model "$v" \
+          || fail "$E_VALIDATION" "invalid model '$v' (allowed chars: letters/digits/._:/-)"
+        case "$type" in
+          claude|codex|grok|antigravity) ;;
+          *) fail "$E_VALIDATION" "type '$type' does not support 'model' config" ;;
+        esac
+        new_model="$v"
+        applied_keys+=("model")
         ;;
       auth-profile|auth.profile)
         if [[ -z "$v" || "$v" == "default" ]]; then
@@ -1043,6 +1127,10 @@ cmd_config() {
     if [[ "$type" == "hermes" ]]; then
       ensure_hermes_gateway "$name"
     fi
+  fi
+  if [[ -n "$new_model" ]]; then
+    step "Writing model=$new_model into $type runtime config"
+    write_runtime_model "$type" "$name" "$new_model"
   fi
   # Defer the restart so the calling process (often `sudo -n 5dive agent
   # set-account` invoked from inside the agent's own bot) gets to return

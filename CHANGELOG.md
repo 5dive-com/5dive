@@ -9,6 +9,23 @@ release.
 
 ## [Unreleased]
 
+## [0.1.26] — 2026-05-30
+
+### Added
+- `5dive agent config <name> set model=<id>` — uniform model switch that writes
+  the selected model into the per-type runtime config the CLI loads, applied on
+  the existing deferred restart. The symmetric write side of `agent info`'s
+  `model` read, so each fork's `/model` can shell out to one CLI path instead of
+  writing its own runtime config. Type-aware: codex/grok edit `config.toml`
+  preamble-safely (replace an existing top-level `model =` or prepend above the
+  first `[table]`, never binding the key to a section or duplicating it);
+  claude/antigravity merge-write the `.model` key in `settings.json` preserving
+  all other keys. Atomic (tmp + rename), existing owner/mode preserved, and
+  refuses to create a missing config (so it can't drop other settings or
+  suppress codex's first-run baseline). Not cached in the registry — `agent
+  info` reads the live file, so a model changed via the native CLI stays
+  authoritative.
+
 ## [0.1.25] — 2026-05-30
 
 ### Added

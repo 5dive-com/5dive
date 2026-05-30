@@ -91,6 +91,16 @@ valid_api_key() {
   [[ "$1" =~ ^[[:graph:]]{10,}$ ]]
 }
 
+# Model identifier accepted by `agent config set model=`. We don't pin to a
+# provider catalogue (codex/grok/gemini/claude all use different families that
+# keep changing) — just a conservative charset that's safe to drop verbatim
+# into a TOML "double-quoted" value or a JSON string without escaping: letters,
+# digits, and ._:/-  (covers gpt-5.4, claude-opus-4-8, gemini-2.0-flash,
+# provider/model forms). The CLI it feeds is the real validator.
+valid_model() {
+  [[ "$1" =~ ^[A-Za-z0-9._:/-]+$ ]]
+}
+
 # Short random id for non-TTY device-code sessions. 16 hex chars = 64 bits —
 # plenty for a workflow that already requires root-on-host to poll.
 gen_session_id() {
