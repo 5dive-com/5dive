@@ -9,6 +9,22 @@ release.
 
 ## [Unreleased]
 
+## [0.1.31] — 2026-05-31
+
+### Added
+- `5dive agent skill --all list [--json]` — bulk variant that lists installed
+  skills for every registry agent in a single invocation, looping serially.
+  The dashboard's agents page previously rendered "Installed" pills by firing
+  one `agent skill <name> list` exec per agent at once; each spawns a sudo+npx
+  process, so on swap-bound boxes the concurrent fan-out saturated shelld, the
+  control-plane fetch timed out, and the dashboard 502'd (the account-switch
+  modal shares that exec path). The bulk command collapses N concurrent execs
+  into one serial loop the box can absorb. `--all` only supports `list`; add/rm
+  stay per-agent so a mutation's blast radius is always a single named agent.
+  Per-agent extraction refactored into a shared `_skill_list_json` helper so the
+  single and bulk paths derive the list identically; best-effort per agent (a
+  failure yields an empty list, never aborts the loop).
+
 ## [0.1.26] — 2026-05-30
 
 ### Added

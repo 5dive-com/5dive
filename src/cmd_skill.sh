@@ -39,13 +39,27 @@ valid_skill_id() {
   [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]
 }
 
-# cmd_skill <agent-name> <action> [args...]
+# cmd_skill <agent-name>|--all <action> [args...]
 # Dispatcher mirrors the auth subcommand shape so main()'s case stays flat.
+#
+# `--all list` is a bulk variant: it lists installed skills for EVERY agent
+# in the registry in a single invocation, looping serially. The dashboard
+# uses it instead of firing one exec per agent — the per-agent fan-out
+# spawned N concurrent sudo+npx processes and saturated swap-bound boxes.
 cmd_skill() {
   local name="${1:-}"
   [[ -n "$name" ]] \
-    || fail "$E_USAGE" "usage: 5dive agent skill <name> add|list|rm [...]"
+    || fail "$E_USAGE" "usage: 5dive agent skill <name>|--all add|list|rm [...]"
   shift
+  # --all only supports `list` (bulk read); add/rm stay per-agent so the
+  # blast radius of a mutation is always a single named agent.
+  if [[ "$name" == "--all" ]]; then
+    local action="${1:-list}"
+    [[ "$action" == "list" ]] \
+      || fail "$E_USAGE" "--all only supports 'list' (got '$action')"
+    cmd_skill_list_all
+    return
+  fi
   require_agent "$name"
   local action="${1:-}"
   [[ -n "$action" ]] \
@@ -177,11 +191,13 @@ SKILL_ADD
      --arg n "$name" --arg s "$source" --arg k "$skill" --arg a "$agent_id"
 }
 
-cmd_skill_list() {
-  local name="$1"; shift
+# _skill_list_json <name> -> prints the installed-skills JSON array for one
+# agent (always valid JSON, "[]" on any failure). Shared by the single-agent
+# `list` and the bulk `--all list` so both paths derive the list identically.
+_skill_list_json() {
+  local name="$1"
   local user="agent-${name}" home="/home/agent-${name}"
-  [[ -d "$home" ]] || fail "$E_GENERIC" "agent home missing: $home"
-  id -u "$user" &>/dev/null || fail "$E_GENERIC" "agent user missing: $user"
+  [[ -d "$home" ]] && id -u "$user" &>/dev/null || { echo "[]"; return; }
 
   local type agent_id install_dir
   type=$(agent_type "$name")
@@ -220,6 +236,17 @@ SKILL_LIST
       echo "$out"
     ' 2>/dev/null || echo "[]")
   fi
+  printf '%s' "${list:-[]}"
+}
+
+cmd_skill_list() {
+  local name="$1"; shift
+  local user="agent-${name}" home="/home/agent-${name}"
+  [[ -d "$home" ]] || fail "$E_GENERIC" "agent home missing: $home"
+  id -u "$user" &>/dev/null || fail "$E_GENERIC" "agent user missing: $user"
+
+  local list
+  list=$(_skill_list_json "$name")
 
   if (( JSON_MODE )); then
     jq -cn --argjson list "$list" --arg n "$name" \
@@ -230,6 +257,36 @@ SKILL_LIST
     else
       jq -r '.[] | [.name, (.path // "-")] | @tsv' <<<"$list" | column -t -s $'\t'
     fi
+  fi
+}
+
+# cmd_skill_list_all — installed skills for every registry agent, looped
+# serially. Replaces the dashboard's per-agent exec fan-out (one concurrent
+# sudo+npx per agent saturated swap-bound boxes → shelld timeout → 502).
+# Best-effort per agent: a failure yields an empty list, never aborts the loop.
+cmd_skill_list_all() {
+  local reg names
+  reg=$(registry_read 2>/dev/null || echo '{}')
+  names=$(jq -r '.agents | keys[]' <<<"$reg" 2>/dev/null || true)
+
+  # Build the {name: [skills]} object incrementally so one slow/failed agent
+  # never discards the others already collected.
+  local agents_json="{}" name list
+  for name in $names; do
+    list=$(_skill_list_json "$name")
+    agents_json=$(jq -c --arg n "$name" --argjson l "${list:-[]}" \
+      '.[$n] = $l' <<<"$agents_json" 2>/dev/null || printf '%s' "$agents_json")
+  done
+
+  if (( JSON_MODE )); then
+    jq -cn --argjson agents "$agents_json" '{ok:true, data:{agents:$agents}}'
+  else
+    local n
+    for n in $(jq -r 'keys[]' <<<"$agents_json"); do
+      local count
+      count=$(jq -r --arg n "$n" '.[$n] | length' <<<"$agents_json")
+      printf '%s\t%s skill(s)\n' "$n" "$count"
+    done | column -t -s $'\t'
   fi
 }
 
