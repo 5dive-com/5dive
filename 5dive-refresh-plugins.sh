@@ -48,6 +48,36 @@ snapshot_state() {
      "$installed" 2>/dev/null
 }
 
+# Drop stale plugin-cache versions for one user. `claude plugin update` fetches
+# each new version into ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/
+# (~29M each w/ its own node_modules) and repoints installed_plugins.json, but
+# never deletes the old version dirs — so they pile up per release. Keep only
+# the active installPath per plugin, and only when it still exists (a stale
+# manifest must never make us delete the live version). Runs as root here.
+prune_plugin_cache() {
+  local home="$1"
+  local cache="$home/.claude/plugins/cache"
+  local manifest="$home/.claude/plugins/installed_plugins.json"
+  [[ -d "$cache" && -r "$manifest" ]] || return 0
+  local keep
+  keep=$(jq -r '.plugins // {} | to_entries[] | .value[]? | .installPath // empty' "$manifest" 2>/dev/null)
+  [[ -n "$keep" ]] || return 0
+  local active parent v pruned=0
+  while IFS= read -r active; do
+    [[ -z "$active" ]] && continue
+    case "$active" in "$cache"/*) ;; *) continue ;; esac
+    [[ -d "$active" ]] || { echo "    (skip prune $(basename "$active"): active dir missing)"; continue; }
+    parent=$(dirname "$active")
+    for v in "$parent"/*; do
+      [[ -d "$v" ]] || continue
+      [[ "$v" != "$active" ]] && rm -rf "$v" && pruned=$((pruned+1))
+    done
+  done <<<"$keep"
+  for v in "$cache"/*.bak-*; do [[ -e "$v" ]] || continue; rm -rf "$v"; pruned=$((pruned+1)); done
+  [[ "$pruned" -gt 0 ]] && echo "    pruned $pruned stale plugin-cache dir(s)"
+  return 0
+}
+
 refresh_agent() {
   local ag="$1"
   local user="agent-$ag"
@@ -106,6 +136,10 @@ refresh_agent() {
     echo "  $user: after:"
     while IFS= read -r line; do echo "    $line"; done <<<"$after"
   fi
+
+  # Now that installed_plugins.json points at the freshly fetched versions,
+  # drop the superseded ones so the cache doesn't grow unbounded per release.
+  prune_plugin_cache "$home"
 }
 
 echo "=== $(date -Iseconds) plugin refresh start ==="
