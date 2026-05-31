@@ -34,6 +34,14 @@ _HB_DEFAULT_EVERY=30
 # and was observed to overrun (see _hb_wake). Min floor keeps short everyMin sane.
 _HB_STALE_MULT=3
 _HB_STALE_MIN_MINUTES=45
+# Starvation signal: a todo task that gets nudged this many times but never
+# leaves 'todo' (started_at stays empty) is almost certainly being starved —
+# e.g. the codex/grok listen-loop watchdog yanking the agent off the task before
+# it runs `task start`. The reaper only catches runaway *in_progress* tasks; this
+# catches the opposite silent failure (nudged but never started) and surfaces it
+# instead of re-nudging forever. Per-task nudge counts live in the registry under
+# .agents[<name>].heartbeat.nudges and are pruned once a task leaves todo.
+_HB_STARVE_AFTER=3
 
 _hb_log() { printf '%s [heartbeat] %s\n' "$(date -u +%FT%TZ)" "$*" >&2; }
 
@@ -179,12 +187,29 @@ cmd_heartbeat_ls() {
   fi
 }
 
-# Persist a wake timestamp. Runs under with_registry_lock from the tick loop.
+# Persist a wake timestamp AND bump the per-task nudge counter. Runs under
+# with_registry_lock from the tick loop. $3 is the DIVE id just nudged. Prunes
+# nudge entries for tasks that have left 'todo' (started/done/cancelled/gone) so
+# the map stays bounded and a counter resets cleanly if a task is re-queued.
+# Echoes the post-increment nudge count for $task_id so the caller can decide
+# whether the task is being starved.
 _hb_mark_run() {
-  local name="$1" now="$2"
+  local name="$1" now="$2" task_id="$3"
   local reg; reg=$(registry_read)
-  echo "$reg" | jq --arg n "$name" --argjson t "$now" \
-    '.agents[$n].heartbeat.lastRunAt = $t' | registry_write
+  # Current todo ids for this agent, as a JSON number array, to prune the map.
+  local todo_ids
+  todo_ids=$(db "SELECT id FROM tasks WHERE assignee=$(sqlq "$name") AND status='todo';" 2>/dev/null \
+             | jq -R 'select(length>0)|tonumber' | jq -cs '.' 2>/dev/null) || todo_ids=""
+  [[ -n "$todo_ids" ]] || todo_ids="[]"
+  reg=$(echo "$reg" | jq --arg n "$name" --argjson t "$now" --arg tid "$task_id" --argjson todo "$todo_ids" '
+    .agents[$n].heartbeat.lastRunAt = $t
+    | .agents[$n].heartbeat.nudges = (
+        ((.agents[$n].heartbeat.nudges // {})
+          | with_entries(select((.key|tonumber) as $k | $todo | index($k) != null)))
+        | .[$tid] = ((.[$tid] // 0) + 1)
+      )')
+  echo "$reg" | registry_write
+  jq -r --arg n "$name" --arg tid "$task_id" '.agents[$n].heartbeat.nudges[$tid] // 0' <<<"$reg"
 }
 
 # Inject one literal line + Enter into an agent's tmux pane. Returns nonzero
@@ -260,7 +285,7 @@ cmd_heartbeat_tick() {
   require_root "heartbeat tick"
   tasks_db_init
   local reg now; reg=$(registry_read); now=$(date +%s)
-  local checked=0 woke=0 reaped=0 sk_notdue=0 sk_busy=0 sk_nowork=0 sk_fail=0
+  local checked=0 woke=0 reaped=0 starved=0 sk_notdue=0 sk_busy=0 sk_nowork=0 sk_fail=0
   local name
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
@@ -296,15 +321,23 @@ cmd_heartbeat_tick() {
 
     _hb_log "[$name] due + todo DIVE-${task_id} — waking (fresh=${fresh})"
     if _hb_wake "$name" "$fresh" "$task_id"; then
-      with_registry_lock _hb_mark_run "$name" "$now"
-      woke=$((woke + 1)); _hb_log "[$name] nudged (/goal DIVE-${task_id})"
+      local nudge_n
+      nudge_n=$(with_registry_lock _hb_mark_run "$name" "$now" "$task_id")
+      woke=$((woke + 1)); _hb_log "[$name] nudged (/goal DIVE-${task_id}, nudge #${nudge_n:-?})"
+      # Nudged repeatedly but the task never left todo → it's being starved
+      # (e.g. listen-loop watchdog yanking the agent before `task start` runs).
+      # Surface it instead of silently re-nudging every tick forever.
+      if [[ "${nudge_n:-0}" =~ ^[0-9]+$ ]] && (( nudge_n >= _HB_STARVE_AFTER )); then
+        starved=$((starved + 1))
+        _hb_log "[$name] WARN: DIVE-${task_id} nudged ${nudge_n}x but still todo (never started) — possible listen-loop starvation; check the agent's task-claim path"
+      fi
     else
       sk_fail=$((sk_fail + 1)); _hb_log "[$name] wake failed — will retry next tick"
     fi
   done < <(jq -r '.agents | to_entries[] | select(.value.heartbeat.enabled == true) | .key' <<<"$reg")
 
-  ok "heartbeat tick: woke ${woke} / reaped ${reaped} / checked ${checked}" \
-     '{checked:($c|tonumber), woke:($w|tonumber), reaped:($r|tonumber),
+  ok "heartbeat tick: woke ${woke} / reaped ${reaped} / starved ${starved} / checked ${checked}" \
+     '{checked:($c|tonumber), woke:($w|tonumber), reaped:($r|tonumber), starved:($st|tonumber),
        skipped:{notDue:($nd|tonumber), busy:($b|tonumber), noWork:($nw|tonumber), failed:($sf|tonumber)}}' \
-     --arg c "$checked" --arg w "$woke" --arg r "$reaped" --arg nd "$sk_notdue" --arg b "$sk_busy" --arg nw "$sk_nowork" --arg sf "$sk_fail"
+     --arg c "$checked" --arg w "$woke" --arg r "$reaped" --arg st "$starved" --arg nd "$sk_notdue" --arg b "$sk_busy" --arg nw "$sk_nowork" --arg sf "$sk_fail"
 }
