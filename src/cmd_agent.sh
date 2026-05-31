@@ -2644,13 +2644,34 @@ cmd_stats() {
   created=$(jq  -r --arg n "$name" '.agents[$n].createdAt // empty'        <<<"$reg")
   workdir=$(jq  -r --arg n "$name" --arg d "$DEFAULT_WORKDIR" '.agents[$n].workdir // $d' <<<"$reg")
 
+  # Best-effort health: the bare systemd state says "active" even when the
+  # agent is wedged at a rate-limit menu or a login screen. Scrape the live
+  # pane for those banners (mirrors the telegram plugin's detectStallCause) so
+  # the dashboard can surface a stall the operator would otherwise only learn
+  # via Telegram. Empty/`null` when running clean or when we can't read the
+  # pane (e.g. not root). Only meaningful while active.
+  local health="null"
+  if [[ "$active" == "active" ]]; then
+    local pane
+    pane=$(sudo -u "agent-${name}" tmux capture-pane -t "agent-${name}" -p -S -40 2>/dev/null | tail -c 4000 || true)
+    if [[ -n "$pane" ]]; then
+      if grep -qiE "session limit|usage limit|hit your (usage|session) limit|rate limit|/rate-limit-options" <<<"$pane"; then
+        local reset; reset=$(grep -oiE "resets?[^|]*" <<<"$pane" | head -1 | tr -s ' ' | sed 's/[[:space:]]*$//')
+        health=$(jq -cn --arg d "${reset:-no reset time shown}" '{cause:"rate_limited", detail:$d}')
+      elif grep -qiE "(sign ?in|log ?in|authenticate|re-?authenticate|enter your api key)" <<<"$pane"; then
+        health=$(jq -cn '{cause:"auth", detail:"sitting at a login screen — re-auth needed"}')
+      fi
+    fi
+  fi
+
   if (( JSON_MODE )); then
     jq -cn \
       --arg name "$name" --arg type "$type" --arg channels "$channels" \
       --arg created "$created" --arg workdir "$workdir" \
       --arg active "$active" --arg sub "$sub" --arg result "$result" \
       --arg restarts "${restarts:-0}" --arg active_ts "$active_ts" \
-      --arg main_ts "$main_ts" --arg exit_status "${exit_status:-}" --arg exit_ts "$exit_ts" '{
+      --arg main_ts "$main_ts" --arg exit_status "${exit_status:-}" --arg exit_ts "$exit_ts" \
+      --argjson health "$health" '{
         ok:true, data:{
           name: $name, type: $type, channels: $channels,
           createdAt: $created, workdir: $workdir,
@@ -2659,7 +2680,8 @@ cmd_stats() {
           activeEnter: $active_ts,
           execMainStart: $main_ts,
           execMainStatus: ($exit_status | tonumber? // null),
-          execMainExit: $exit_ts
+          execMainExit: $exit_ts,
+          health: $health
         }
       }'
   else
@@ -2674,5 +2696,8 @@ cmd_stats() {
     echo "active since: ${active_ts:-never}"
     echo "last start:   ${main_ts:-never}"
     echo "last exit:    ${exit_ts:-never} (status=${exit_status:-?})"
+    if [[ "$health" != "null" ]]; then
+      echo "health:       $(jq -r '"\(.cause) — \(.detail)"' <<<"$health")"
+    fi
   fi
 }
