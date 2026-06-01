@@ -108,6 +108,7 @@ If you'd rather click than `ssh`, [5dive.com](https://5dive.com) is the managed 
 5dive doctor [--repair] [--json]
 5dive watch                              # htop-style live view
 5dive compose up / down / ps             # declarative agents via 5dive.yaml
+5dive self-update                        # update CLI + plugins, then restart agents
 ```
 
 Full flag reference: `5dive --help` (or `5dive <verb> --help`). Machine-readable output on any command via `--json`.
@@ -176,11 +177,16 @@ docker exec -it 5dive-demo bash
 
 **Offline / air-gapped.** `install.sh` reads from `$REPO` (default GitHub raw). Override with `REPO=file:///path/to/local/tree` and pre-install apt deps. The fetched files are listed at the top of `install.sh`.
 
-**Context rot.** Long sessions degrade. Restart daily via cron:
-```cron
-0 4 * * * curl -fsSL https://install.5dive.com | bash -s -- --upgrade && systemctl restart '5dive-agent@*.service'
+**Updating.** 5dive doesn't auto-update — you stay in control of when code changes land. To update on demand:
+```sh
+sudo 5dive self-update
 ```
-Claude-runtime agents keep project memory under `~/.claude/projects/<dir>/memory/` across restarts. Session resets, knowledge stays.
+This refreshes the CLI, hooks, skills, and plugins (the same `install.sh --upgrade` path), then restarts each running agent so the new versions actually load — a live agent keeps its old plugin in memory until it restarts. The agent AI CLIs (`claude`, `codex`, …) self-update via their own autoupdaters; the restart loads the latest. Want it on a schedule? Drop it in cron:
+```cron
+0 4 * * * /usr/local/bin/5dive self-update >/dev/null 2>&1
+```
+
+**Context rot.** Long sessions degrade — the daily `self-update` above also restarts agents, giving each a fresh session. Claude-runtime agents keep project memory under `~/.claude/projects/<dir>/memory/` across restarts. Session resets, knowledge stays.
 
 ---
 

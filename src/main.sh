@@ -12,6 +12,9 @@ Global flags:
 Maintenance:
   5dive --version                                    # print version
   5dive init                                         # interactive first-run wizard
+  5dive self-update                                  # update the CLI + plugins, then restart agents
+                                                     # (alias: 5dive update). On-demand upgrade for
+                                                     # self-hosted boxes; managed boxes update nightly.
   5dive uninstall [--purge] [--yes]                  # remove 5dive (--purge also wipes state + user)
 
 Live view:
@@ -404,6 +407,13 @@ main() {
       else
         fail "$E_NOT_FOUND" "curl is required for 5dive uninstall"
       fi ;;
+    self-update|self_update|update)
+      # On-demand "update everything + reload" for OSS self-hosters with no
+      # scheduler: runs install.sh --upgrade (CLI + plugins) then restarts
+      # running agents so the changes load. Mirrors the managed nightly.
+      [[ $EUID -eq 0 ]] || fail "$E_PERMISSION" "self-update must run as root (sudo 5dive self-update)"
+      AUDIT_CMD="self-update"; AUDIT_ARGS=("$@")
+      cmd_self_update "$@" ;;
     -h|--help|help) usage ;;
     *) fail "$E_USAGE" "unknown command: $top" ;;
   esac

@@ -9,6 +9,19 @@ release.
 
 ## [Unreleased]
 
+## [0.1.33] — 2026-06-01
+
+### Added
+- `5dive self-update` (alias `5dive update`) — on-demand upgrade for
+  self-hosted boxes that have no scheduler of their own. Fetches `install.sh`
+  and runs `--upgrade` (refreshes the CLI, `5dive-agent-start`, hooks, skills,
+  the systemd template, and plugins via `5dive-refresh-plugins.sh`), then
+  restarts every running agent so the refreshed plugins/CLIs actually load — a
+  live agent keeps its old plugin in memory until it restarts, the usual cause
+  of "plugin still shows the old version" after an upgrade. Root-only; `--json`
+  reports which agents restarted. Managed boxes keep their nightly scheduler;
+  running it there is a harmless, idempotent no-op beyond the restart.
+
 ## [0.1.31] — 2026-05-31
 
 ### Added

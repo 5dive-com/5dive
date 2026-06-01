@@ -40,6 +40,7 @@ cat \
   src/cmd_task.sh \
   src/cmd_org.sh \
   src/cmd_heartbeat.sh \
+  src/cmd_selfupdate.sh \
   src/main.sh \
   > "$OUT"
 
