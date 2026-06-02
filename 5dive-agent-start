@@ -793,12 +793,24 @@ esac
 # The marker is consumed (deleted) regardless of validity so a stuck file can't
 # wedge the agent into permanent resume. The id is validated to a UUID shape
 # before it ever reaches the claude argv.
+#
+# Optional line 2 = an auto-resume prompt. The account-rotation path writes
+# "continue" there so the swapped-in account immediately answers the in-flight
+# turn (a bare `--resume` reloads the session but sits idle at the prompt).
+# Manual /resume writes only the bare id (no line 2) → no auto-prompt, behavior
+# unchanged. The prompt is constrained to a safe charset so a malformed/hostile
+# marker can't inject extra claude argv.
 RESUME_ID=""
+RESUME_PROMPT=""
 if [[ "$TYPE" == "claude" ]]; then
   RESUME_MARKER="$HOME/.claude/channels/telegram/resume-next"
   if [[ -s "$RESUME_MARKER" ]]; then
-    _cand="$(head -n1 "$RESUME_MARKER" | tr -d '[:space:]')"
+    _cand="$(sed -n '1p' "$RESUME_MARKER" | tr -d '[:space:]')"
     [[ "$_cand" =~ ^[0-9a-fA-F-]{36}$ ]] && RESUME_ID="$_cand"
+    _prompt="$(sed -n '2p' "$RESUME_MARKER" | tr -d '\r\n')"
+    if [[ -n "$RESUME_ID" && "$_prompt" =~ ^[A-Za-z0-9\ ._-]{1,200}$ ]]; then
+      RESUME_PROMPT="$_prompt"
+    fi
     rm -f "$RESUME_MARKER"
   fi
 fi
@@ -822,7 +834,13 @@ fi
 # `--resume <id>`; subsequent respawns fall back to the plain CMD_STR. No
 # resume id → byte-identical to the original simple loop.
 if [[ -n "$RESUME_ID" ]]; then
-  CMD_STR_FIRST=$(printf '%q ' "$BIN" --resume "$RESUME_ID" "${ARGS[@]}")
+  # A trailing positional prompt seeds the first interactive turn (no --print →
+  # stays interactive). Only added when the marker carried a valid line-2 prompt.
+  if [[ -n "$RESUME_PROMPT" ]]; then
+    CMD_STR_FIRST=$(printf '%q ' "$BIN" --resume "$RESUME_ID" "${ARGS[@]}" "$RESUME_PROMPT")
+  else
+    CMD_STR_FIRST=$(printf '%q ' "$BIN" --resume "$RESUME_ID" "${ARGS[@]}")
+  fi
   LOOP="__first=1; while true; do if [[ \$__first == 1 ]]; then ${CMD_STR_FIRST}; __first=0; else ${CMD_STR}; fi; sleep 2; done"
 else
   LOOP="while true; do ${CMD_STR}; sleep 2; done"
