@@ -26,7 +26,7 @@ esac
 
 # Bumped on every public release. `build.sh` checks this line exists; CI fails
 # the bundle-drift check if it's missing or empty.
-readonly FIVE_VERSION="0.1.38"
+readonly FIVE_VERSION="0.1.39"
 
 STATE_DIR="/var/lib/5dive"
 REGISTRY="${STATE_DIR}/agents.json"
@@ -1679,9 +1679,14 @@ OPENCODE_ENV
     fail "$E_GENERIC" "opencode telegram .env write failed for agent '$name'"
   fi
 
-  if [[ -n "$allowed_users" ]]; then
-    seed_opencode_telegram_access "$name" "$allowed_users"
-  fi
+  # Always seed access.json (DIVE-45). The opencode bridge's loadAccess()
+  # defaults to {allowFrom:[], dmPolicy:allowlist} when the file is absent —
+  # i.e. block-everything — so a freshly-provisioned bot with no access.json
+  # SILENTLY DROPS every DM and the customer never gets a reply. seed_* now
+  # always writes the file: with allowed_users it allowlists them; without, it
+  # defaults dmPolicy to 'pairing' so the first DM yields a pairing code (parity
+  # with the claude/codex/grok effective default of pairing-on-first-contact).
+  seed_opencode_telegram_access "$name" "$allowed_users"
 
   # Seed the notify-user skill so the agent self-starts its comms loop on first
   # DM. opencode reads skills from $HOME/.agents/skills/<name>/SKILL.md
@@ -1699,14 +1704,22 @@ OPENCODE_ENV
   install_default_skill_for_agent "$name" opencode 5dive-com/skills 5dive-cli || true
 }
 
-# Write ~/.opencode/channels/telegram/access.json for agent-<name> with allowFrom
-# seeded from a CSV of user ids. Idempotent — mirrors seed_grok_telegram_access,
-# but the opencode bridge's access schema also carries dmPolicy + pending (see
-# the telegram-opencode PROVISIONING-CONTRACT §3), so we default those too.
+# Write ~/.opencode/channels/telegram/access.json for agent-<name>. Idempotent —
+# mirrors seed_grok_telegram_access, but the opencode bridge's access schema also
+# carries dmPolicy + pending (see the telegram-opencode PROVISIONING-CONTRACT
+# §3), so we default those too. allowed_users may be empty: we still write the
+# file (the bridge block-everything default makes a missing file a silent-DM-drop
+# — DIVE-45), defaulting dmPolicy to 'pairing' so the first DM pairs instead of
+# being dropped. An existing dmPolicy is never overridden (re-runs / token
+# rotation preserve the operator's choice).
 seed_opencode_telegram_access() {
   local name="$1" allowed_users="$2"
   local user="agent-${name}"
-  step "Pre-seeding opencode telegram allowlist for $user (${allowed_users})"
+  if [[ -n "$allowed_users" ]]; then
+    step "Seeding opencode telegram access.json for $user (allow ${allowed_users})"
+  else
+    step "Seeding opencode telegram access.json for $user (dmPolicy=pairing)"
+  fi
   if ! sudo -u "$user" env CSV="$allowed_users" python3 - <<'PY' >&2; then
 import json, os, tempfile
 
@@ -1719,7 +1732,7 @@ try:
     with open(access_path) as f:
         data = json.load(f)
 except FileNotFoundError:
-    data = {"allowFrom": [], "groups": {}, "dmPolicy": "allowlist", "pending": {}}
+    data = {}
 
 allow = list(data.get('allowFrom') or [])
 for s in ids:
@@ -1727,15 +1740,19 @@ for s in ids:
         allow.append(s)
 data['allowFrom'] = allow
 data.setdefault('groups', {})
-data.setdefault('dmPolicy', 'allowlist')
 data.setdefault('pending', {})
+# Never override an explicit dmPolicy (re-run / rotation keeps the operator's
+# choice). For a fresh file: allowlist when we have ids to allow, else pairing
+# so the first DM yields a pairing code instead of a silent drop.
+if 'dmPolicy' not in data:
+    data['dmPolicy'] = 'allowlist' if allow else 'pairing'
 
 fd, tmp = tempfile.mkstemp(dir=state, prefix='.access.', suffix='.tmp')
 with os.fdopen(fd, 'w') as f:
     json.dump(data, f, indent=2)
 os.chmod(tmp, 0o600)
 os.replace(tmp, access_path)
-print(f"Seeded allowFrom={allow} into {access_path}")
+print(f"Seeded access.json dmPolicy={data['dmPolicy']} allowFrom={allow} into {access_path}")
 PY
     fail "$E_GENERIC" "opencode telegram access.json pre-seed failed for agent '$name'"
   fi
